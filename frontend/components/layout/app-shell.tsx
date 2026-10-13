@@ -4,6 +4,7 @@ import { Button, Dropdown, Layout, Nav, SideSheet, Spin, Tag, Tooltip, Typograph
 import {
   IconActivity,
   IconBell,
+  IconClock,
   IconDesktop,
   IconExit,
   IconGithubLogo,
@@ -41,6 +42,7 @@ const NAV_ITEMS: { itemKey: string; text: string; icon: ReactNode }[] = [
   { itemKey: "/announcements", text: "上游公告", icon: <IconHorn /> },
   { itemKey: "/notifications", text: "通知", icon: <IconBell /> },
   { itemKey: "/captcha", text: "打码平台", icon: <IconShield /> },
+  { itemKey: "/jobs", text: "后台任务", icon: <IconClock /> },
   { itemKey: "/monitor-logs", text: "监控日志", icon: <IconHistory /> },
   { itemKey: "/settings", text: "设置", icon: <IconSetting /> },
 ]

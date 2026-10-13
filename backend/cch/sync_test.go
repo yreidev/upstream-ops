@@ -184,10 +184,15 @@ func TestRunNowMatchesByHostAndKeyTail(t *testing.T) {
 	}
 	f.cch.failIDs = map[int64]error{4: &APIError{Status: 422, Code: "validation", Detail: "bad"}}
 
-	result, err := f.svc.RunNow(context.Background())
-	if err != nil {
-		t.Fatalf("run: %v", err)
+	msg, out, err := f.svc.RunNow(context.Background())
+	// 有供应商改失败时任务记为失败，结果里仍带完整的配对明细
+	if err == nil || !strings.Contains(err.Error(), "demo-Gemini") {
+		t.Fatalf("run err = %v, want the failed provider", err)
 	}
+	if msg != "改了 1 个，修改失败 1 个，已一致 1 个，未同步 7 个" {
+		t.Fatalf("message = %q", msg)
+	}
+	result := out.(*Result)
 	items := itemsByName(result)
 	want := map[string]Status{
 		"demo-Pro": StatusInSync, "demo-独享": StatusUpdated, "demo-旧": StatusSkipped,
@@ -281,7 +286,7 @@ func TestRunNowUnauthorizedNotifiesThenRecovers(t *testing.T) {
 	f := newFixture(t)
 	f.cch.listErr = &APIError{Status: 401, Code: "auth.invalid", Detail: "Authentication is invalid or expired."}
 
-	if _, err := f.svc.RunNow(context.Background()); err == nil || !IsUnauthorized(err) {
+	if _, _, err := f.svc.RunNow(context.Background()); err == nil || !IsUnauthorized(err) {
 		t.Fatalf("want unauthorized error, got %v", err)
 	}
 	msgs := testRecorder.take()
@@ -294,7 +299,7 @@ func TestRunNowUnauthorizedNotifiesThenRecovers(t *testing.T) {
 	}
 
 	f.cch.listErr = nil
-	if _, err := f.svc.RunNow(context.Background()); err != nil {
+	if _, _, err := f.svc.RunNow(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	msgs = testRecorder.take()

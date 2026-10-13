@@ -32,7 +32,6 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
-  IconUnlock,
   IconUser,
 } from "@douyinfe/semi-icons"
 import { PageHeader } from "@/components/layout/page-header"
@@ -44,6 +43,7 @@ import {
   ChannelStatusTags,
   SyncProgress,
   emptySyncState,
+  syncStateOf,
   healthMeta,
   rechargeMultiplierTip,
   type APIKeyAction,
@@ -52,13 +52,13 @@ import {
 import { ChannelRechargeModal } from "@/components/channels/channel-recharge-modal"
 import { ChannelRedeemModal } from "@/components/channels/channel-redeem-modal"
 import { apiFetch } from "@/lib/api"
-import type { Channel, ChannelListOrder, ChannelListSort, ChannelListStatus } from "@/lib/api-types"
+import type { BackgroundJob, Channel, ChannelListOrder, ChannelListSort, ChannelListStatus, ProgressEvent } from "@/lib/api-types"
 import { channelTagKey } from "@/lib/channel-tags"
 import { confirm } from "@/lib/confirm"
 import { channelTypeLabel, fullDateTime, money, relativeTime } from "@/lib/format"
 import { useChannels, useChannelsPage } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
-import { syncAllChannelsStream, syncChannelStream, testLoginStream } from "@/lib/sync-stream"
+import { fetchRunningJobs, isAbort, startJob, watchJob } from "@/lib/jobs"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 type ChannelPageSize = 10 | 20 | 50 | 100 | "all"
@@ -190,9 +190,26 @@ export default function ChannelsPage() {
   // 成功的进度 5 秒后自动收起
   const hideTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
 
+  // 同步、测试登录都是后端的后台任务，页面只轮询进度；离开页面就停止轮询，任务照常跑完。
+  // 测试登录在编辑弹窗里发起，刷新页面后在这里接上
+  const watchAbort = useRef<AbortController | null>(null)
+  const watching = useRef<Set<number>>(new Set())
+
   useEffect(() => {
     const timers = hideTimers.current
+    const ctrl = new AbortController()
+    watchAbort.current = ctrl
+    // 接上还在跑的任务：刷新页面、从别的页回来、另一台设备上发起的
+    fetchRunningJobs()
+      .then((list) => {
+        for (const job of list) {
+          if (job.kind === "channel_sync_all") void followBulkJob(job)
+          else if (job.kind === "channel_sync" || job.kind === "channel_test_login") void followChannelJob(job)
+        }
+      })
+      .catch(() => {})
     return () => {
+      ctrl.abort()
       timers.forEach((t) => clearTimeout(t))
       timers.clear()
     }
@@ -251,83 +268,123 @@ export default function ChannelsPage() {
     setSyncState((s) => ({ ...s, [id]: fn(s[id] ?? emptySyncState()) }))
   }
 
-  async function startStream(channel: Channel, action: "sync" | "test-login") {
+  function expandRow(id: number) {
+    setExpandedKeys((keys) => (keys.includes(id) ? keys : [...keys, id]))
+  }
+
+  async function followChannelJob(job: BackgroundJob) {
+    const id = job.channel_id
+    if (!id || watching.current.has(job.id)) return
+    watching.current.add(job.id)
+    const signal = watchAbort.current?.signal
+    clearHideTimer(id)
+    expandRow(id)
+    try {
+      const done = await watchJob(job.id, (j) => patchSync(id, () => syncStateOf(j)), signal)
+      if (done.status === "succeeded") scheduleHide(id)
+      refresh()
+    } catch (e) {
+      if (isAbort(e, signal)) return
+      patchSync(id, (prev) => ({
+        ...prev,
+        running: false,
+        finalOk: false,
+        latest: {
+          stage: "error",
+          message: `查不到任务进度：${(e as Error).message}。任务仍在后台运行，可到“后台任务”页查看结果`,
+          time: new Date().toISOString(),
+        },
+      }))
+    } finally {
+      watching.current.delete(job.id)
+    }
+  }
+
+  async function syncChannel(channel: Channel) {
     clearHideTimer(channel.id)
     patchSync(channel.id, () => ({ running: true, events: [], latest: null, finalOk: null }))
-    // 展开这一行，让分步进度看得见
-    setExpandedKeys((keys) => (keys.includes(channel.id) ? keys : [...keys, channel.id]))
-    let sawError = false
-    const stream = action === "sync" ? syncChannelStream : testLoginStream
+    expandRow(channel.id)
     try {
-      await stream(channel.id, {
-        onEvent: (ev) => {
-          if (ev.stage === "error" || ev.ok === false) sawError = true
-          patchSync(channel.id, (prev) => ({ ...prev, events: [...prev.events, ev], latest: ev }))
-        },
-      })
-      patchSync(channel.id, (prev) => ({ ...prev, running: false, finalOk: !sawError }))
-      if (!sawError) scheduleHide(channel.id)
+      const { job, started } = await startJob(`/channels/${channel.id}/sync`)
+      if (!started) Toast.info(`${channel.name} 已有任务在跑（${job.title}），显示它的进度`)
+      await followChannelJob(job)
     } catch (e) {
-      // 失败的进度保留，不自动收起
       patchSync(channel.id, (prev) => ({
         ...prev,
         running: false,
         finalOk: false,
         latest: {
           stage: "error",
-          message: (e as Error).message || (action === "sync" ? "同步失败" : "测试登录失败"),
+          message: (e as Error).message || "同步失败",
           time: new Date().toISOString(),
         },
       }))
-    } finally {
+    }
+  }
+
+  /** 全部同步的事件带渠道和序号，按渠道拆开显示在各行；每个渠道最后一条是结论。 */
+  function applyBulkJob(job: BackgroundJob) {
+    const byChannel = new Map<number, ProgressEvent[]>()
+    let total = 0
+    for (const ev of job.events ?? []) {
+      if (!ev.channel_id) continue
+      total = ev.total ?? total
+      byChannel.set(ev.channel_id, [...(byChannel.get(ev.channel_id) ?? []), ev])
+    }
+    const running = job.status === "running"
+    const states: Record<number, ChannelSyncState> = {}
+    let completed = 0
+    for (const [id, events] of byChannel) {
+      const last = events[events.length - 1]
+      const finished = last.stage === "done" || last.stage === "error" || last.stage === "skipped"
+      if (finished) completed++
+      if (finished || running) {
+        states[id] = { running: !finished, events, latest: last, finalOk: finished ? last.stage !== "error" : null }
+      } else {
+        // 任务已结束但这个渠道没出结论（服务停止时正在跑）
+        const final: ProgressEvent = { stage: "error", message: job.message || "失败", time: job.finished_at ?? job.started_at }
+        states[id] = { running: false, events: [...events, final], latest: final, finalOk: false }
+      }
+    }
+    setSyncState((s) => ({ ...s, ...states }))
+    setBulkSync((prev) => ({ running, completed, total: total || prev.total }))
+  }
+
+  async function followBulkJob(job: BackgroundJob) {
+    if (watching.current.has(job.id)) return
+    watching.current.add(job.id)
+    const signal = watchAbort.current?.signal
+    setBulkSync((prev) => ({ ...prev, running: true }))
+    try {
+      const done = await watchJob(job.id, applyBulkJob, signal)
+      if (done.status === "succeeded") Toast.success(done.message || "全部同步完成")
+      else Toast.error(done.message || "全部同步失败")
+      // 成功和跳过的行 5 秒后收起，失败的留着
+      const lastByChannel = new Map<number, ProgressEvent>()
+      for (const ev of done.events ?? []) if (ev.channel_id) lastByChannel.set(ev.channel_id, ev)
+      for (const [id, ev] of lastByChannel) if (ev.stage === "done" || ev.stage === "skipped") scheduleHide(id)
       refresh()
+    } catch (e) {
+      if (isAbort(e, signal)) return
+      Toast.error(`查不到全部同步的进度：${(e as Error).message}。任务仍在后台运行，可到“后台任务”页查看结果`)
+    } finally {
+      watching.current.delete(job.id)
+      if (!signal?.aborted) setBulkSync((prev) => ({ ...prev, running: false }))
     }
   }
 
   async function startBulkSync() {
     const list = channels ?? []
     if (list.length === 0) return
-    for (const c of list) {
-      clearHideTimer(c.id)
-      patchSync(c.id, () => ({ running: true, events: [], latest: null, finalOk: null }))
-    }
+    for (const c of list) clearHideTimer(c.id)
     setBulkSync({ running: true, completed: 0, total: list.length })
     try {
-      await syncAllChannelsStream({
-        onEvent: (ev) => {
-          if (ev.channel_id != null) {
-            patchSync(ev.channel_id, (prev) => ({
-              ...prev,
-              events: [...prev.events, ev],
-              latest: ev,
-              running: ev.stage !== "done" && ev.stage !== "error",
-              finalOk: ev.stage === "done" ? true : ev.stage === "error" ? false : prev.finalOk,
-            }))
-            if (ev.stage === "done") scheduleHide(ev.channel_id)
-          }
-          if (ev.index != null && ev.total != null) {
-            setBulkSync((prev) => ({
-              ...prev,
-              completed: Math.max(prev.completed, ev.index ?? prev.completed),
-              total: ev.total ?? prev.total,
-            }))
-          }
-          if (ev.channel_id == null && (ev.stage === "done" || ev.stage === "error")) {
-            if (ev.stage === "done") Toast.success(ev.message)
-            else Toast.error(ev.message)
-          }
-        },
-      })
+      const { job, started } = await startJob("/channels/sync-all")
+      if (!started) Toast.info("全部同步已经在跑，显示它的进度")
+      await followBulkJob(job)
     } catch (e) {
-      Toast.error((e as Error).message || "批量同步失败")
-    } finally {
-      setSyncState((s) => {
-        const next: Record<number, ChannelSyncState> = {}
-        for (const [id, state] of Object.entries(s)) next[Number(id)] = { ...state, running: false }
-        return next
-      })
+      Toast.error((e as Error).message || "全部同步失败")
       setBulkSync((prev) => ({ ...prev, running: false }))
-      refresh()
     }
   }
 
@@ -399,8 +456,7 @@ export default function ChannelsPage() {
         </Tooltip>
       )
     return [
-      button("sync", "同步", <IconRefresh spin={syncing} />, () => void startStream(c, "sync"), { disabled }),
-      button("test-login", "测试登录", <IconUnlock />, () => void startStream(c, "test-login"), { disabled }),
+      button("sync", "同步", <IconRefresh spin={syncing} />, () => void syncChannel(c), { disabled }),
       button("keys", "密钥", <IconKey />, () => setAPIKeySheet({ channel: c })),
       button("edit", "编辑", <IconEdit />, () => openForm(c)),
       <Dropdown

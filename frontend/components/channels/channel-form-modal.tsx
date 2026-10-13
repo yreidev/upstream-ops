@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import {
+  Button,
   Divider,
   Input,
   Modal,
@@ -10,14 +11,18 @@ import {
   Switch,
   TagInput,
   TextArea,
+  Toast,
+  Tooltip,
   Typography,
 } from "@douyinfe/semi-ui"
 import { IconHelpCircle } from "@douyinfe/semi-icons"
 import type { Channel, ChannelType, CredentialMode, RechargeMultiplierMode } from "@/lib/api-types"
 import { apiFetch } from "@/lib/api"
 import { channelTagKey } from "@/lib/channel-tags"
+import { isAbort, startJob, watchJob } from "@/lib/jobs"
 import { useCaptchaConfigs } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
+import { SyncProgress, emptySyncState, syncStateOf, type ChannelSyncState } from "@/components/channels/channel-parts"
 import { FormError } from "@/components/common/form-error"
 
 /**
@@ -88,6 +93,13 @@ function normalizeTags(list: string[]): string[] {
     }
   }
   return out
+}
+
+/** sameForm 判断表单有没有没保存的改动。NewAPI 鉴权方式只是切换输入框，不填内容保存了也不变，不算改动。 */
+function sameForm(a: FormState, b: FormState): boolean {
+  return (Object.keys(a) as (keyof FormState)[]).every(
+    (k) => k === "newapi_token_kind" || JSON.stringify(a[k]) === JSON.stringify(b[k]),
+  )
 }
 
 function initialState(c?: Channel | null): FormState {
@@ -191,31 +203,62 @@ export function ChannelFormModal({ visible, onClose, channel }: {
   channel?: Channel | null
 }) {
   const [form, setForm] = useState<FormState>(() => initialState(channel))
+  // 最近一次打开或保存时的表单，和它不一样就是有没保存的改动
+  const [baseline, setBaseline] = useState<FormState>(() => initialState(channel))
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 在这个弹窗里保存过的渠道；保存后弹窗不关，新增的渠道存过之后再保存就是修改它
+  const [saved, setSaved] = useState<Channel | null>(null)
+  // 测试登录是后端的后台任务，弹窗只轮询进度；关掉弹窗就停止轮询，任务照常跑完
+  const [test, setTest] = useState<ChannelSyncState | null>(null)
+  const watchAbort = useRef<AbortController | null>(null)
+  const progressRef = useRef<HTMLDivElement>(null)
   const refresh = useTriggerRefresh()
   const captchas = useCaptchaConfigs(visible)
 
   // 打开或换了目标渠道时重置表单
   useEffect(() => {
     if (visible) {
-      setForm(initialState(channel))
+      const init = initialState(channel)
+      setForm(init)
+      setBaseline(init)
       setError(null)
+      setSaved(null)
+      setTest(null)
     }
   }, [visible, channel])
 
-  const isEdit = !!channel
+  useEffect(() => {
+    if (!visible) return
+    const ctrl = new AbortController()
+    watchAbort.current = ctrl
+    return () => ctrl.abort()
+  }, [visible])
+
+  const testing = test?.running ?? false
+  // 进度在表单最下面，开始测试和每来一步都滚过去，跑完的结论也露出来
+  const testSteps = test ? test.events.length + 1 : 0
+  useEffect(() => {
+    if (testSteps) progressRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [testSteps])
+
+  const target = saved ?? channel ?? null
+  const isEdit = !!target
   const isTokenMode = form.credential_mode === "token"
   // 编辑时凭据类型没变，token / 密码都可以留空表示不改
-  const modeChanged = isEdit && form.credential_mode !== (channel?.credential_mode ?? "password")
-  const existingNewAPIUserID = isEdit && channel?.type === "newapi" ? (channel.user_id ?? "").trim() : ""
+  const modeChanged = isEdit && form.credential_mode !== (target?.credential_mode ?? "password")
+  const existingNewAPIUserID = isEdit && target?.type === "newapi" ? (target.user_id ?? "").trim() : ""
   const notesLength = charLength(form.notes.trim())
+  const dirty = !sameForm(form, baseline)
+  // 测试登录用的是库里存的凭据，所以新渠道和有改动时都要先保存
+  const testBlocked = !target ? "新渠道要先点“保存”，才能测试登录" : dirty ? "有改动还没保存，先点“保存”再测试登录" : null
 
   function patch(p: Partial<FormState>) {
     setForm((f) => ({ ...f, ...p }))
   }
 
-  async function handleOk() {
+  /** 检查并保存表单，返回保存后的渠道；有错时显示在表单底部，返回 null。 */
+  async function save(): Promise<Channel | null> {
     setError(null)
     setSubmitting(true)
     try {
@@ -310,13 +353,14 @@ export function ChannelFormModal({ visible, onClose, channel }: {
         notes,
       }
 
+      let result: Channel
       if (isEdit) {
         const body: Record<string, unknown> = { ...common }
         if (!isTokenMode && form.password) body.password = form.password
         if (isTokenMode && tokenCredential) body.token_credential = tokenCredential
-        await apiFetch(`/channels/${channel!.id}`, { method: "PUT", body: JSON.stringify(body) })
+        result = await apiFetch<Channel>(`/channels/${target!.id}`, { method: "PUT", body: JSON.stringify(body) })
       } else {
-        await apiFetch(`/channels`, {
+        result = await apiFetch<Channel>(`/channels`, {
           method: "POST",
           body: JSON.stringify({
             ...common,
@@ -326,12 +370,47 @@ export function ChannelFormModal({ visible, onClose, channel }: {
           }),
         })
       }
-      onClose()
       refresh()
+      return result
     } catch (e) {
       setError((e as Error).message || "保存失败")
+      return null
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  /** 保存后弹窗不关：表单换成刚存下的样子（凭据输入框清空），这时才能测试登录。 */
+  async function handleSave() {
+    const result = await save()
+    if (!result) return
+    const next = { ...initialState(result), newapi_token_kind: form.newapi_token_kind }
+    setSaved(result)
+    setForm(next)
+    setBaseline(next)
+    // 存了新凭据，上一次的测试结果就不作数了
+    setTest(null)
+    Toast.success("已保存")
+  }
+
+  /** 用库里存的凭据测试登录；失败了改完凭据再保存、再测。 */
+  async function handleTest() {
+    if (!target) return
+    const signal = watchAbort.current?.signal
+    setTest({ ...emptySyncState(), running: true })
+    try {
+      const { job, started } = await startJob(`/channels/${target.id}/test-login`)
+      if (!started) Toast.info(`${target.name} 已有任务在跑（${job.title}），显示它的进度`)
+      await watchJob(job.id, (j) => setTest(syncStateOf(j)), signal)
+      refresh()
+    } catch (e) {
+      if (isAbort(e, signal)) return
+      const failed = {
+        stage: "error" as const,
+        message: (e as Error).message || "测试登录失败",
+        time: new Date().toISOString(),
+      }
+      setTest((prev) => ({ running: false, events: [...(prev?.events ?? []), failed], latest: failed, finalOk: false }))
     }
   }
 
@@ -342,15 +421,33 @@ export function ChannelFormModal({ visible, onClose, channel }: {
       visible={visible}
       title={isEdit ? "编辑渠道" : "新增渠道"}
       onCancel={onClose}
-      onOk={handleOk}
-      okText="保存"
-      confirmLoading={submitting}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={submitting}>
+            {saved && !dirty ? "关闭" : "取消"}
+          </Button>
+          {testBlocked && !testing ? (
+            <Tooltip content={testBlocked}>
+              <Button disabled>测试登录</Button>
+            </Tooltip>
+          ) : (
+            <Button onClick={() => void handleTest()} loading={testing} disabled={submitting}>
+              测试登录
+            </Button>
+          )}
+          <Button theme="solid" onClick={() => void handleSave()} loading={submitting} disabled={testing}>
+            保存
+          </Button>
+        </>
+      }
       width={640}
       bodyStyle={{ maxHeight: "72vh", overflowY: "auto" }}
     >
       <div className="stack" style={{ gap: 14 }}>
         <Typography.Text type="tertiary" size="small">
-          {isEdit ? "保存后会清空已缓存的登录会话。" : "添加上游账号，开启监控后按计划自动登录采集。"}
+          {isEdit
+            ? "保存后会清空已缓存的登录会话，弹窗不关。改了登录凭据先点“保存”，再点“测试登录”，结果显示在最下面。"
+            : "添加上游账号，开启监控后按计划自动登录采集。保存后弹窗不关，可以点“测试登录”确认凭据能不能用。"}
         </Typography.Text>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 120px", gap: 12 }}>
@@ -608,6 +705,13 @@ export function ChannelFormModal({ visible, onClose, channel }: {
               </Field>
             ) : null}
           </>
+        ) : null}
+
+        {test ? (
+          <div ref={progressRef} className="stack" style={{ gap: 6 }}>
+            <Typography.Text strong>测试登录</Typography.Text>
+            <SyncProgress state={test} />
+          </div>
         ) : null}
 
         <FormError message={error} />

@@ -1,7 +1,7 @@
-// Package progress 提供把"扫描子步骤进度"通过 context 透传到业务层、再由顶层 handler / scheduler 决定如何消费的能力。
+// Package progress 把任务的分步进度经 context 传到业务层，由外层决定怎么记录。
 //
-// 调度任务（cron）走 context.Background() 时拿到的是 NopObserver，所有 Emit 都是 no-op；
-// 手动 sync 的 HTTP handler 把 SSEObserver 塞进 ctx，业务每一步的 Emit 都会被 stream 出去。
+// 业务层只管 Start / OK / Fail；后台任务（jobs 包）把记录进度的 Observer 塞进 ctx，
+// 事件随任务一起存库，页面轮询任务时读到。ctx 里没有 Observer 时 Emit 什么都不做。
 package progress
 
 import (
@@ -20,6 +20,7 @@ const (
 	StageCost    Stage = "cost"
 	StageRates   Stage = "rates"
 	StageDone    Stage = "done"
+	StageSkipped Stage = "skipped"
 	StageError   Stage = "error"
 )
 
@@ -41,7 +42,7 @@ type Observer interface {
 	Emit(Event)
 }
 
-// NopObserver 什么都不做，scheduler 默认走这条路径。
+// NopObserver 什么都不做，ctx 里没有 Observer 时用它。
 type NopObserver struct{}
 
 func (NopObserver) Emit(Event) {}
@@ -79,8 +80,41 @@ func OK(ctx context.Context, s Stage, msg string, data ...any) {
 	FromContext(ctx).Emit(ev)
 }
 
+// Skip 发送一条"跳过"事件：没去做，也不算失败（如登录退避中）。
+func Skip(ctx context.Context, msg string) {
+	ok := true
+	FromContext(ctx).Emit(Event{Stage: StageSkipped, Message: msg, OK: &ok, Time: time.Now()})
+}
+
 // Fail 发送一条"失败"事件。
 func Fail(ctx context.Context, s Stage, msg string) {
 	no := false
 	FromContext(ctx).Emit(Event{Stage: s, Message: msg, OK: &no, Time: time.Now()})
+}
+
+// ForChannel 让 ctx 里发出的事件都带上渠道和序号（第 index 个，共 total 个），批量任务里用来区分是哪个渠道。
+func ForChannel(ctx context.Context, channelID uint, channelName string, index, total int) context.Context {
+	return WithObserver(ctx, channelObserver{
+		base:        FromContext(ctx),
+		channelID:   channelID,
+		channelName: channelName,
+		index:       index,
+		total:       total,
+	})
+}
+
+type channelObserver struct {
+	base        Observer
+	channelID   uint
+	channelName string
+	index       int
+	total       int
+}
+
+func (o channelObserver) Emit(ev Event) {
+	ev.ChannelID = o.channelID
+	ev.ChannelName = o.channelName
+	ev.Index = o.index
+	ev.Total = o.total
+	o.base.Emit(ev)
 }

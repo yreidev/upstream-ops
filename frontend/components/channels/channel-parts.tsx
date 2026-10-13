@@ -2,10 +2,9 @@ import { Button, Dropdown, Spin, Table, Tag, Tooltip, Typography } from "@douyin
 import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
 import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
 import { IconClose, IconForward, IconKey, IconPlus, IconTick } from "@douyinfe/semi-icons"
-import type { Channel, RateSnapshot } from "@/lib/api-types"
+import type { BackgroundJob, Channel, ProgressEvent, RateSnapshot } from "@/lib/api-types"
 import { decimal, formatRatio, relativeTime } from "@/lib/format"
 import { useChannelRates } from "@/lib/queries"
-import type { ProgressEvent } from "@/lib/sync-stream"
 
 export type ChannelHealth = "healthy" | "low" | "failed" | "idle"
 
@@ -53,6 +52,21 @@ export function emptySyncState(): ChannelSyncState {
   return { running: false, events: [], latest: null, finalOk: null }
 }
 
+/** 单个渠道任务的进度：跑完后补一条结论，失败原因显示在最后。 */
+export function syncStateOf(job: BackgroundJob): ChannelSyncState {
+  const events = job.events ?? []
+  if (job.status === "running") return { running: true, events, latest: events.at(-1) ?? null, finalOk: null }
+  const ok = job.status === "succeeded"
+  const final: ProgressEvent = {
+    stage: ok ? "done" : "error",
+    message: job.message || (ok ? "完成" : "失败"),
+    time: job.finished_at ?? job.started_at,
+  }
+  // 失败原因已经写在出错的那一步里时，不再重复一行“失败”
+  const shownInStep = !ok && events.some((ev) => (ev.stage === "error" || ev.ok === false) && ev.message === final.message)
+  return { running: false, events: shownInStep ? events : [...events, final], latest: final, finalOk: ok }
+}
+
 export const stageLabel: Record<ProgressEvent["stage"], string> = {
   captcha: "打码",
   session: "会话",
@@ -61,6 +75,7 @@ export const stageLabel: Record<ProgressEvent["stage"], string> = {
   cost: "消费",
   rates: "倍率",
   done: "完成",
+  skipped: "跳过",
   error: "失败",
 }
 
@@ -72,6 +87,7 @@ const stageOrder: Record<ProgressEvent["stage"], number> = {
   cost: 5,
   rates: 7,
   done: 9,
+  skipped: 9,
   error: 9,
 }
 
@@ -86,7 +102,7 @@ function deriveSteps(events: ProgressEvent[]): ProgressEvent[] {
 export function SyncProgress({ state }: { state: ChannelSyncState }) {
   if (!state.running && state.latest == null) return null
   const steps = deriveSteps(state.events)
-  // 流本身出错（网络断开等）时没有分步事件，只有 latest
+  // 任务失败但没有分步事件（如没找到渠道）时只有 latest
   const shown = steps.length === 0 && state.latest ? [state.latest] : steps
   return (
     <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--semi-color-fill-0)" }}>

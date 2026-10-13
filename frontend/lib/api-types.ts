@@ -187,6 +187,72 @@ export interface MonitorLog {
   finished_at: string
 }
 
+/** 后台任务（backend/storage/background_jobs.go）。 */
+export type JobKind =
+  | "channel_sync"
+  | "channel_test_login"
+  | "channel_sync_all"
+  | "balance_scan"
+  | "rate_scan"
+  | "cch_sync"
+  | "retention"
+export type JobSource = "manual" | "scheduled"
+export type JobStatus = "running" | "succeeded" | "failed" | "interrupted"
+
+/** 任务的分步进度（backend/progress）。 */
+export type ProgressStage =
+  | "captcha"
+  | "session"
+  | "login"
+  | "balance"
+  | "cost"
+  | "rates"
+  | "done"
+  | "skipped"
+  | "error"
+
+export interface ProgressEvent {
+  stage: ProgressStage
+  message: string
+  /** 不带表示进行中。 */
+  ok?: boolean
+  data?: unknown
+  time: string
+  channel_id?: number
+  channel_name?: string
+  index?: number
+  total?: number
+}
+
+export interface BackgroundJob {
+  id: number
+  kind: JobKind
+  source: JobSource
+  channel_id?: number
+  title: string
+  status: JobStatus
+  message?: string
+  started_at: string
+  finished_at?: string
+  /** 列表接口不带，单个任务和运行中列表才带。 */
+  events?: ProgressEvent[]
+  result?: unknown
+}
+
+export interface BackgroundJobPage {
+  items: BackgroundJob[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+/** 发起任务的返回：同一对象已有任务在跑时 started 为 false，job 是正在跑的那个。 */
+export interface StartedJob {
+  job: BackgroundJob
+  started: boolean
+}
+
 export interface DashboardLowest {
   channel_id: number
   name: string

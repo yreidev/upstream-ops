@@ -7,13 +7,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/cch"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 type cchSyncService interface {
 	Settings() (*cch.SettingsView, error)
 	SaveSettings(in cch.SettingsInput) (*cch.SettingsView, error)
 	Preview(ctx context.Context) (*cch.Result, error)
-	RunNow(ctx context.Context) (*cch.Result, error)
+	RunNow(ctx context.Context) (string, any, error)
 }
 
 func registerCCHSync(g *gin.RouterGroup, d *Deps) {
@@ -47,24 +48,16 @@ func registerCCHSync(g *gin.RouterGroup, d *Deps) {
 		}
 		c.JSON(http.StatusOK, gin.H{"data": result})
 	})
+	// 预览只读不写，中途断开没有副作用，仍按普通请求返回；立即同步会改 CCH，放到后台任务里跑。
 	gs.POST("/run", func(c *gin.Context) {
-		result, err := d.CCHSync.RunNow(c.Request.Context())
-		if err != nil {
-			fail(c, cchSyncErrorStatus(err), err)
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"data": result})
+		startJob(c, d, cch.JobSpec(storage.JobManual), d.CCHSync.RunNow)
 	})
 }
 
-// cchSyncErrorStatus 没配置是请求问题，同步正在跑是冲突，其余多为连不上 CCH 或 CCH 报错。
+// cchSyncErrorStatus 没配置是请求问题，其余多为连不上 CCH 或 CCH 报错。
 func cchSyncErrorStatus(err error) int {
-	switch {
-	case errors.Is(err, cch.ErrNotConfigured):
+	if errors.Is(err, cch.ErrNotConfigured) {
 		return http.StatusBadRequest
-	case errors.Is(err, cch.ErrBusy):
-		return http.StatusConflict
-	default:
-		return http.StatusBadGateway
 	}
+	return http.StatusBadGateway
 }

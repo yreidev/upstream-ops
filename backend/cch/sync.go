@@ -16,6 +16,7 @@ import (
 	"github.com/yreidev/upstream-ops/backend/config"
 	"github.com/yreidev/upstream-ops/backend/connector"
 	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/jobs"
 	"github.com/yreidev/upstream-ops/backend/notify"
 	"github.com/yreidev/upstream-ops/backend/storage"
 )
@@ -139,37 +140,59 @@ func NewService(
 	}
 }
 
-// RunScheduled 在每轮定时倍率采集之后调用：没启用或上一轮还在跑时直接跳过。
-func (s *Service) RunScheduled(ctx context.Context) {
-	cfg, err := s.repo.Get()
-	if err != nil {
-		s.log.Warn("load cch sync config", "err", err)
-		return
-	}
-	if !cfg.Enabled {
-		return
-	}
-	if !s.running.TryLock() {
-		s.log.Info("cch sync skipped: previous run still in progress")
-		return
-	}
-	defer s.running.Unlock()
-	if _, err := s.sync(channel.WithScheduled(ctx), cfg); err != nil {
-		s.log.Warn("cch sync failed", "err", err)
+// JobSpec 是 CCH 同步作为后台任务时的描述；手动和定时共用一个 Key，同时只跑一个。
+func JobSpec(source storage.JobSource) jobs.Spec {
+	return jobs.Spec{
+		Kind:    storage.JobCCHSync,
+		Source:  source,
+		Title:   "CCH 成本倍率同步",
+		Key:     string(storage.JobCCHSync),
+		Timeout: 3 * time.Minute,
 	}
 }
 
+// ScheduledEnabled 表示定时同步开着；关着时倍率采集后不跑，也不记任务。
+func (s *Service) ScheduledEnabled() bool {
+	cfg, err := s.repo.Get()
+	if err != nil {
+		s.log.Warn("load cch sync config", "err", err)
+		return false
+	}
+	return cfg.Enabled
+}
+
+// RunScheduled 在每轮定时倍率采集之后作为后台任务执行，受登录退避限制。
+func (s *Service) RunScheduled(ctx context.Context) (string, any, error) {
+	return s.run(channel.WithScheduled(ctx), true)
+}
+
 // RunNow 手动同步一轮，开关关着也能用；结果同样写监控日志、发通知。
-func (s *Service) RunNow(ctx context.Context) (*Result, error) {
+func (s *Service) RunNow(ctx context.Context) (string, any, error) {
+	return s.run(ctx, false)
+}
+
+// run 执行一轮同步，返回值按后台任务的约定：有供应商改失败时任务记为失败，结果里仍带完整的配对明细。
+// scheduled 为 true 时，开关关着就不同步。
+func (s *Service) run(ctx context.Context, scheduled bool) (string, any, error) {
 	if !s.running.TryLock() {
-		return nil, ErrBusy
+		return "", nil, ErrBusy
 	}
 	defer s.running.Unlock()
 	cfg, err := s.repo.Get()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return s.sync(ctx, cfg)
+	if scheduled && !cfg.Enabled {
+		return "定时同步已关闭，没有同步", nil, nil
+	}
+	result, err := s.sync(ctx, cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	if result.Failed > 0 {
+		return result.Summary(), result, errors.New(failedReasons(result))
+	}
+	return result.Summary(), result, nil
 }
 
 // Preview 只配对、算出要改成多少，不改 CCH，也不写日志和通知。
@@ -209,7 +232,7 @@ func (s *Service) sync(ctx context.Context, cfg *storage.CCHSyncConfig) (*Result
 		s.apply(ctx, client, result)
 	}
 	if err != nil && channel.IsCanceled(ctx) {
-		return nil, err // 手动同步时用户关掉了页面，不算失败
+		return nil, err // 服务停止时被中断，不算失败
 	}
 
 	runErr := err

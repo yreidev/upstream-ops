@@ -1,12 +1,13 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Banner, Button, Form, Table, Tag, Toast, Tooltip, Typography } from "@douyinfe/semi-ui"
 import type { FormApi } from "@douyinfe/semi-ui/lib/es/form"
 import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
 import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
 import { SettingsSection } from "@/components/settings/settings-section"
 import { apiFetch } from "@/lib/api"
-import type { CCHSyncItem, CCHSyncResult, CCHSyncSettings, CCHSyncStatus } from "@/lib/api-types"
+import type { BackgroundJob, CCHSyncItem, CCHSyncResult, CCHSyncSettings, CCHSyncStatus } from "@/lib/api-types"
 import { confirm } from "@/lib/confirm"
+import { fetchRunningJobs, isAbort, startJob, watchJob } from "@/lib/jobs"
 import { formatRatio, fullDateTime, relativeTime } from "@/lib/format"
 import { useCCHSyncSettings } from "@/lib/queries"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -118,6 +119,21 @@ export function CCHSyncSection() {
   const [checking, setChecking] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<CCHSyncResult | null>(null)
+  // 立即同步是后端的后台任务；离开页面只停止轮询，同步照常跑完
+  const watchAbort = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    const ctrl = new AbortController()
+    watchAbort.current = ctrl
+    // 刷新或重新打开页面时，接上还在跑的同步（手动或定时）
+    fetchRunningJobs()
+      .then((list) => {
+        const job = list.find((j) => j.kind === "cch_sync")
+        if (job) void followRun(job)
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [])
 
   if (!initial && query.data) setInitial(query.data)
   const saved = query.data ?? initial
@@ -170,15 +186,33 @@ export function CCHSyncSection() {
     if (!ok) return
     setRunning(true)
     try {
-      const r = await apiFetch<CCHSyncResult>("/cch-sync/run", { method: "POST" })
-      setResult(r)
-      if (r.failed) Toast.warning(resultText(r))
-      else Toast.success(r.updated ? `已改 ${r.updated} 个供应商` : "都已一致，没有要改的")
+      const { job, started } = await startJob("/cch-sync/run")
+      if (!started) Toast.info("已有一轮同步在跑，显示它的结果")
+      await followRun(job)
     } catch (err) {
       Toast.error(err instanceof Error ? err.message : "同步失败")
-    } finally {
       setRunning(false)
-      query.refetch()
+    }
+  }
+
+  async function followRun(job: BackgroundJob) {
+    const signal = watchAbort.current?.signal
+    setRunning(true)
+    try {
+      const done = await watchJob(job.id, () => {}, signal)
+      const r = (done.result ?? null) as CCHSyncResult | null
+      if (r) setResult(r)
+      if (done.status === "succeeded") Toast.success(r?.updated ? `已改 ${r.updated} 个供应商` : "都已一致，没有要改的")
+      else if (r?.failed) Toast.warning(resultText(r))
+      else Toast.error(done.message || "同步失败")
+    } catch (err) {
+      if (isAbort(err, signal)) return
+      Toast.error(`查不到同步进度：${err instanceof Error ? err.message : err}。同步仍在后台运行，可到“后台任务”页查看结果`)
+    } finally {
+      if (!signal?.aborted) {
+        setRunning(false)
+        query.refetch()
+      }
     }
   }
 

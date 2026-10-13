@@ -3,6 +3,8 @@ import { apiFetch } from "@/lib/api"
 import { useRefreshTick } from "@/lib/refresh-context"
 import type {
   AppVersion,
+  BackgroundJob,
+  BackgroundJobPage,
   BalanceTrendPoint,
   CaptchaConfig,
   CCHSyncSettings,
@@ -13,6 +15,9 @@ import type {
   ChannelPage,
   CostTrendPoint,
   DashboardSummary,
+  JobKind,
+  JobSource,
+  JobStatus,
   MonitorLog,
   NotificationChannel,
   NotificationLogPage,
@@ -304,6 +309,26 @@ export function useMonitorLogs(channelID: number | undefined, limit: number) {
   if (channelID != null) q.set("channel_id", String(channelID))
   q.set("limit", String(limit))
   return useApi<MonitorLog[]>(`/monitor-logs?${q.toString()}`)
+}
+
+export interface JobFilter {
+  kind?: JobKind
+  source?: JobSource
+  status?: JobStatus
+}
+
+/** 后台任务按开始时间倒序分页，不带进度事件。 */
+export function useJobs(filter: JobFilter, page: number, pageSize: number) {
+  const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  if (filter.kind) q.set("kind", filter.kind)
+  if (filter.source) q.set("source", filter.source)
+  if (filter.status) q.set("status", filter.status)
+  return useApi<BackgroundJobPage>(`/jobs?${q.toString()}`)
+}
+
+/** 单个任务，带进度事件和结果。 */
+export function useJob(id: number) {
+  return useApi<BackgroundJob>(`/jobs/${id}`)
 }
 
 export function useSystemConfig() {

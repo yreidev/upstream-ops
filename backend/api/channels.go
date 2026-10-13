@@ -1,19 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/channel"
 	"github.com/yreidev/upstream-ops/backend/connector"
+	"github.com/yreidev/upstream-ops/backend/jobs"
 	"github.com/yreidev/upstream-ops/backend/progress"
 	"github.com/yreidev/upstream-ops/backend/storage"
 )
@@ -30,8 +31,6 @@ func registerChannels(g *gin.RouterGroup, d *Deps) {
 	gp.POST("/:id/enable", func(c *gin.Context) { toggleChannel(c, d, true) })
 	gp.POST("/:id/disable", func(c *gin.Context) { toggleChannel(c, d, false) })
 	gp.POST("/:id/test-login", func(c *gin.Context) { testLogin(c, d) })
-	gp.POST("/:id/refresh-balance", func(c *gin.Context) { refreshBalance(c, d) })
-	gp.POST("/:id/refresh-rates", func(c *gin.Context) { refreshRates(c, d) })
 	gp.POST("/:id/redeem", func(c *gin.Context) { redeemChannel(c, d) })
 	gp.GET("/:id/recharge-info", func(c *gin.Context) { channelRechargeInfo(c, d) })
 	gp.POST("/:id/recharge", func(c *gin.Context) { createChannelRecharge(c, d) })
@@ -373,68 +372,34 @@ func toggleChannel(c *gin.Context, d *Deps, enabled bool) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "monitor_enabled": enabled})
 }
 
+// channelJobTimeout 单个渠道的同步或登录测试最长跑多久（含打码）。
+const channelJobTimeout = 5 * time.Minute
+
+// channelJob 是针对单个渠道的后台任务；同一渠道的同步和登录测试共用一个 Key，不会同时跑。
+func channelJob(kind storage.JobKind, verb string, ch *storage.Channel) jobs.Spec {
+	return jobs.Spec{
+		Kind:      kind,
+		Source:    storage.JobManual,
+		ChannelID: ch.ID,
+		Title:     verb + " " + ch.Name,
+		Key:       fmt.Sprintf("channel:%d", ch.ID),
+		Timeout:   channelJobTimeout,
+	}
+}
+
+// testLogin 在后台测试登录，session 落库以便后续同步复用。
 func testLogin(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
+	ch, ok := findChannelParam(c, d)
+	if !ok {
 		return
 	}
-	ch, err := d.Channels.FindByID(id)
-	if err != nil {
-		fail(c, http.StatusNotFound, err)
-		return
-	}
-
-	obs := setupSSE(c)
-	ctx := progress.WithObserver(c.Request.Context(), channelScopedObserver{
-		base:        obs,
-		channelID:   ch.ID,
-		channelName: ch.Name,
-		index:       1,
-		total:       1,
+	startJob(c, d, channelJob(storage.JobChannelTestLogin, "测试登录", ch), func(ctx context.Context) (string, any, error) {
+		ctx = progress.ForChannel(ctx, ch.ID, ch.Name, 1, 1)
+		if err := d.ChannelSvc.TestLogin(ctx, ch.ID); err != nil {
+			return "", nil, err
+		}
+		return "登录测试成功", nil, nil
 	})
-
-	if err := d.ChannelSvc.TestLogin(ctx, id); err != nil {
-		progress.Fail(ctx, progress.StageError, err.Error())
-		return
-	}
-	progress.OK(ctx, progress.StageDone, "登录测试成功")
-}
-
-func refreshBalance(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	ch, err := d.Channels.FindByID(id)
-	if err != nil {
-		fail(c, http.StatusNotFound, err)
-		return
-	}
-	if err := d.Monitor.RefreshBalance(c.Request.Context(), ch); err != nil {
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-func refreshRates(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	ch, err := d.Channels.FindByID(id)
-	if err != nil {
-		fail(c, http.StatusNotFound, err)
-		return
-	}
-	if err := d.Monitor.RefreshRates(c.Request.Context(), ch); err != nil {
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func redeemChannel(c *gin.Context, d *Deps) {
@@ -747,181 +712,53 @@ func parseChannelListFilter(c *gin.Context) (storage.ChannelListFilter, error) {
 	}.Normalize()
 }
 
-// setupSSE 给 ResponseWriter 设上 text/event-stream 头，返回一个就绪的 sseObserver。
-// 调用方接下来一般是：
-//
-//	obs := setupSSE(c)
-//	ctx := progress.WithObserver(c.Request.Context(), obs)
-//	// ... 业务逻辑里的 progress.Start / OK / Fail 会被实时 stream 出去 ...
-//	obs.Emit(progress.Event{Stage: progress.StageDone, Message: "完成"})
-func setupSSE(c *gin.Context) *sseObserver {
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache, no-transform")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no") // disable nginx-style proxy buffering
-	c.Writer.WriteHeader(http.StatusOK)
-
-	obs := &sseObserver{w: c.Writer}
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		obs.flush = flusher.Flush
-	}
-	return obs
-}
-
-// sseObserver 把 progress.Event 序列化成 SSE 格式写入 ResponseWriter。
-// 因为 gin 的 Handler 在一个 goroutine 中跑，而 emit 可能从下游同步 / 异步发起，
-// 这里加锁保证 writer 串行写。
-type sseObserver struct {
-	mu     sync.Mutex
-	w      io.Writer
-	flush  func()
-	closed bool
-}
-
-func (o *sseObserver) Emit(ev progress.Event) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed {
-		return
-	}
-	payload, err := json.Marshal(ev)
-	if err != nil {
-		return
-	}
-	// SSE: "data: <json>\n\n"
-	if _, err := io.WriteString(o.w, "data: "); err != nil {
-		o.closed = true
-		return
-	}
-	if _, err := o.w.Write(payload); err != nil {
-		o.closed = true
-		return
-	}
-	if _, err := io.WriteString(o.w, "\n\n"); err != nil {
-		o.closed = true
-		return
-	}
-	if o.flush != nil {
-		o.flush()
-	}
-}
-
-type channelScopedObserver struct {
-	base        progress.Observer
-	channelID   uint
-	channelName string
-	index       int
-	total       int
-}
-
-func (o channelScopedObserver) Emit(ev progress.Event) {
-	ev.ChannelID = o.channelID
-	ev.ChannelName = o.channelName
-	ev.Index = o.index
-	ev.Total = o.total
-	o.base.Emit(ev)
-}
-
-// syncChannel 通过 SSE 把整个同步过程的子步骤实时推给前端。
-//
-//	GET / POST /api/channels/:id/sync
-//	响应 Content-Type: text/event-stream，每条事件形如
-//	  data: {"stage":"login","message":"登录上游…","time":"..."}
-//
-// 前端用 fetch + ReadableStream 读取，按 "\n\n" 切片解析。
+// syncChannel 在后台同步单个渠道：先余额和消费，再倍率，任一步失败仍做下一步。
 func syncChannel(c *gin.Context, d *Deps) {
+	ch, ok := findChannelParam(c, d)
+	if !ok {
+		return
+	}
+	startJob(c, d, channelJob(storage.JobChannelSync, "同步", ch), func(ctx context.Context) (string, any, error) {
+		ctx = progress.ForChannel(ctx, ch.ID, ch.Name, 1, 1)
+		balErr := d.Monitor.RefreshBalance(ctx, ch)
+		rateErr := d.Monitor.RefreshRates(ctx, ch)
+		if balErr != nil || rateErr != nil {
+			return "", nil, errors.New(joinErrorMessages(balErr, rateErr))
+		}
+		return "同步完成", nil, nil
+	})
+}
+
+// syncAllChannels 在后台逐个同步全部渠道的余额和消费。
+func syncAllChannels(c *gin.Context, d *Deps) {
+	startJob(c, d, jobs.Spec{
+		Kind:    storage.JobChannelSyncAll,
+		Source:  storage.JobManual,
+		Title:   "同步全部渠道",
+		Key:     string(storage.JobChannelSyncAll),
+		Timeout: 15 * time.Minute,
+	}, func(ctx context.Context) (string, any, error) {
+		sum, err := d.Monitor.SyncAllBalances(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		return sum.Message(), sum, sum.Err()
+	})
+}
+
+// findChannelParam 按路径里的 :id 取渠道，失败时已写好错误响应。
+func findChannelParam(c *gin.Context, d *Deps) (*storage.Channel, bool) {
 	id, err := uintParam(c, "id")
 	if err != nil {
 		fail(c, http.StatusBadRequest, err)
-		return
+		return nil, false
 	}
 	ch, err := d.Channels.FindByID(id)
 	if err != nil {
 		fail(c, http.StatusNotFound, err)
-		return
+		return nil, false
 	}
-
-	obs := setupSSE(c)
-	ctx := progress.WithObserver(c.Request.Context(), channelScopedObserver{
-		base:        obs,
-		channelID:   ch.ID,
-		channelName: ch.Name,
-		index:       1,
-		total:       1,
-	})
-
-	// 串行执行：先余额，再倍率。任一步失败仍尝试下一个，但用 done 表示整体状态。
-	balErr := d.Monitor.RefreshBalance(ctx, ch)
-	rateErr := d.Monitor.RefreshRates(ctx, ch)
-
-	switch {
-	case balErr != nil || rateErr != nil:
-		progress.Fail(ctx, progress.StageError, joinErrorMessages(balErr, rateErr))
-	default:
-		progress.OK(ctx, progress.StageDone, "同步完成")
-	}
-}
-
-func syncAllChannels(c *gin.Context, d *Deps) {
-	list, err := d.Channels.List()
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	obs := setupSSE(c)
-	baseCtx := c.Request.Context()
-	total := len(list)
-	var successCount, failedCount int
-
-	if total == 0 {
-		obs.Emit(progress.Event{
-			Stage:   progress.StageDone,
-			Message: "批量同步完成：成功 0，失败 0",
-			Time:    time.Now(),
-		})
-		return
-	}
-
-	for i := range list {
-		ch := list[i]
-		scoped := channelScopedObserver{
-			base:        obs,
-			channelID:   ch.ID,
-			channelName: ch.Name,
-			index:       i + 1,
-			total:       total,
-		}
-		ctx := progress.WithObserver(baseCtx, scoped)
-
-		if err := d.Monitor.RefreshBalance(ctx, &ch); err != nil {
-			failedCount++
-			scoped.Emit(progress.Event{
-				Stage:   progress.StageError,
-				Message: fmt.Sprintf("同步失败：%v", err),
-				Time:    time.Now(),
-			})
-			continue
-		}
-
-		successCount++
-		scoped.Emit(progress.Event{
-			Stage:   progress.StageDone,
-			Message: "同步完成",
-			Time:    time.Now(),
-		})
-	}
-
-	summary := fmt.Sprintf("批量同步完成：成功 %d，失败 %d", successCount, failedCount)
-	stage := progress.StageDone
-	if failedCount > 0 {
-		stage = progress.StageError
-	}
-	obs.Emit(progress.Event{
-		Stage:   stage,
-		Message: summary,
-		Time:    time.Now(),
-	})
+	return ch, true
 }
 
 func joinErrorMessages(errs ...error) string {

@@ -123,6 +123,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&LoginBackoffState{},
 		&MonitorLog{},
 		&CCHSyncConfig{},
+		&BackgroundJob{},
 		&AppliedMigration{},
 	); err != nil {
 		return err

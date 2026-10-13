@@ -14,6 +14,7 @@ import (
 	"github.com/yreidev/upstream-ops/backend/channel"
 	"github.com/yreidev/upstream-ops/backend/connector"
 	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/monitor"
 	"github.com/yreidev/upstream-ops/backend/notify"
 	"github.com/yreidev/upstream-ops/backend/runtimeconfig"
 	"github.com/yreidev/upstream-ops/backend/storage"
@@ -23,6 +24,7 @@ import (
 type monitorService interface {
 	RefreshBalance(ctx context.Context, c *storage.Channel) error
 	RefreshRates(ctx context.Context, c *storage.Channel) error
+	SyncAllBalances(ctx context.Context) (*monitor.ScanSummary, error)
 }
 
 type channelService interface {
@@ -63,6 +65,8 @@ type Deps struct {
 	ChannelSvc    channelService
 	Monitor       monitorService
 	CCHSync       cchSyncService
+	Jobs          jobStarter
+	JobRepo       *storage.BackgroundJobs
 	Dispatcher    *notify.Dispatcher
 	Log           *slog.Logger
 
@@ -100,6 +104,9 @@ func Register(r *gin.Engine, d *Deps) {
 		registerMonitorLogs(api, d)
 		registerDashboard(api, d)
 		registerSettings(api, d)
+		if d.JobRepo != nil {
+			registerJobs(api, d)
+		}
 		if d.CCHSync != nil {
 			registerCCHSync(api, d)
 		}

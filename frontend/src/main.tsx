@@ -20,6 +20,7 @@ const RatesPage = lazy(() => import('@/app/rates-page'))
 const AnnouncementsPage = lazy(() => import('@/app/announcements-page'))
 const NotificationsPage = lazy(() => import('@/app/notifications-page'))
 const CaptchaPage = lazy(() => import('@/app/captcha-page'))
+const JobsPage = lazy(() => import('@/app/jobs-page'))
 const MonitorLogsPage = lazy(() => import('@/app/monitor-logs-page'))
 const SettingsPage = lazy(() => import('@/app/settings-page'))
 const NotFoundPage = lazy(() => import('@/app/not-found-page'))
@@ -39,6 +40,7 @@ createRoot(document.getElementById('root')!).render(
                   <Route path="announcements" element={<AnnouncementsPage />} />
                   <Route path="notifications" element={<NotificationsPage />} />
                   <Route path="captcha" element={<CaptchaPage />} />
+                  <Route path="jobs" element={<JobsPage />} />
                   <Route path="monitor-logs" element={<MonitorLogsPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="*" element={<NotFoundPage />} />

@@ -19,6 +19,7 @@ import (
 	"github.com/yreidev/upstream-ops/backend/channel"
 	"github.com/yreidev/upstream-ops/backend/config"
 	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/jobs"
 	"github.com/yreidev/upstream-ops/backend/logger"
 	"github.com/yreidev/upstream-ops/backend/monitor"
 	"github.com/yreidev/upstream-ops/backend/notify"
@@ -112,10 +113,17 @@ func main() {
 	})
 	monitorSvc := monitor.NewService(channels, announcements, rates, monLogs, channelSvc, dispatcher, log)
 	cchSyncSvc := cch.NewService(storage.NewCCHSync(db), channels, channelSvc, monLogs, dispatcher, cipher, log, channelSvc.UpstreamConfig)
+	jobRepo := storage.NewBackgroundJobs(db)
+	jobRunner := jobs.NewRunner(jobRepo, log)
 
 	schedulerFactory := func(scfg config.SchedulerConfig) *scheduler.Scheduler {
 		return scheduler.New(scfg, monitorSvc, monLogs, rates, notifies, announcements, captchas, cipher, log).
-			OnRatesScanned(cchSyncSvc.RunScheduled)
+			WithJobs(jobRunner).
+			OnRatesScanned(func() {
+				if cchSyncSvc.ScheduledEnabled() {
+					jobRunner.Run(cch.JobSpec(storage.JobScheduled), cchSyncSvc.RunScheduled)
+				}
+			})
 	}
 	sch := schedulerFactory(cfg.Scheduler)
 	if err := sch.Start(); err != nil {
@@ -168,6 +176,8 @@ func main() {
 		ChannelSvc:    channelSvc,
 		Monitor:       monitorSvc,
 		CCHSync:       cchSyncSvc,
+		Jobs:          jobRunner,
+		JobRepo:       jobRepo,
 		Dispatcher:    dispatcher,
 		Log:           log,
 		Frontend:      frontendFS,
@@ -197,5 +207,7 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Error("http shutdown error", "err", err)
 	}
+	// 没跑完的后台任务记成被中断，下次启动也会补记
+	jobRunner.Shutdown(5 * time.Second)
 	log.Info("bye")
 }

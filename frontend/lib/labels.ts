@@ -1,5 +1,11 @@
 import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
-import type { MonitorJob, NotificationEvent } from "@/lib/api-types"
+import type {
+  JobKind,
+  JobSource,
+  JobStatus,
+  MonitorJob,
+  NotificationEvent,
+} from "@/lib/api-types"
 
 /** 通知事件的中文名和标签颜色。 */
 export const notificationEventMeta: Record<NotificationEvent, { label: string; color: TagColor }> = {
@@ -28,4 +34,27 @@ export const monitorJobLabel: Record<MonitorJob, string> = {
   costs: "消费",
   rates: "倍率",
   cch_sync: "CCH 同步",
+}
+
+/** 后台任务类型（backend/storage/background_jobs.go Job*）。 */
+export const jobKindLabel: Record<JobKind, string> = {
+  channel_sync: "同步渠道",
+  channel_test_login: "测试登录",
+  channel_sync_all: "全部同步",
+  balance_scan: "余额采集",
+  rate_scan: "倍率采集",
+  cch_sync: "CCH 同步",
+  retention: "清理历史",
+}
+
+export const jobSourceLabel: Record<JobSource, string> = {
+  manual: "手动",
+  scheduled: "定时",
+}
+
+export const jobStatusMeta: Record<JobStatus, { label: string; color: TagColor }> = {
+  running: { label: "运行中", color: "blue" },
+  succeeded: { label: "成功", color: "green" },
+  failed: { label: "失败", color: "red" },
+  interrupted: { label: "被中断", color: "amber" },
 }

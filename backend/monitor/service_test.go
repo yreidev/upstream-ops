@@ -18,6 +18,7 @@ import (
 	_ "github.com/yreidev/upstream-ops/backend/connector/sub2api"
 	"github.com/yreidev/upstream-ops/backend/crypto"
 	"github.com/yreidev/upstream-ops/backend/notify"
+	"github.com/yreidev/upstream-ops/backend/progress"
 	"github.com/yreidev/upstream-ops/backend/storage"
 	"gorm.io/gorm"
 )
@@ -712,5 +713,73 @@ func TestRefreshBalanceCostFailureKeepsBalanceAlertAndDefersFailure(t *testing.T
 	}
 	if ok, found := jobs[storage.MonitorJobCosts]; !found || ok {
 		t.Fatalf("failed costs log missing: %+v", logs)
+	}
+}
+
+type eventLog struct{ events []progress.Event }
+
+func (l *eventLog) Emit(ev progress.Event) { l.events = append(l.events, ev) }
+
+func TestSyncAllBalancesSummarizesPerChannel(t *testing.T) {
+	db := openTestDB(t)
+	channels := storage.NewChannels(db)
+	monitorLogs := storage.NewMonitorLogs(db)
+	cipher, err := crypto.NewCipher("secret")
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"message":"","data":{"balance":12}}`))
+		case "/api/v1/usage/dashboard/stats":
+			if r.Header.Get("Authorization") == "Bearer bad" {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"message":"","data":{"today_actual_cost":1,"total_actual_cost":2}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiSrv.Close()
+
+	for _, c := range []struct{ name, token string }{{"good", "good"}, {"bad", "bad"}} {
+		if err := channels.Create(&storage.Channel{
+			Name: c.name, Type: storage.ChannelTypeSub2API, SiteURL: apiSrv.URL,
+			PasswordCipher: mustEncrypt(t, cipher, `{"access_token":"`+c.token+`"}`),
+			CredentialMode: storage.CredentialModeToken, MonitorEnabled: true,
+		}); err != nil {
+			t.Fatalf("create channel: %v", err)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	channelSvc := channel.NewService(channels, storage.NewAuthSessions(db), storage.NewCaptchas(db), storage.NewRates(db), monitorLogs, cipher)
+	dispatcher := notify.NewDispatcher(storage.NewNotifications(db), cipher, logger, notify.Policy{SendMaxAttempts: 1})
+	svc := NewService(channels, storage.NewUpstreamAnnouncements(db), storage.NewRates(db), monitorLogs, channelSvc, dispatcher, logger)
+
+	log := &eventLog{}
+	sum, err := svc.SyncAllBalances(progress.WithObserver(context.Background(), log))
+	if err != nil {
+		t.Fatalf("SyncAllBalances: %v", err)
+	}
+	if sum.Message() != "2 个渠道：成功 1，失败 1（bad）" || sum.Err() == nil || !strings.Contains(sum.Err().Error(), "bad：") {
+		t.Fatalf("summary = %q, err = %v", sum.Message(), sum.Err())
+	}
+
+	// 每个渠道最后一条是结论，带渠道和序号，页面按它显示每一行
+	last := map[uint]progress.Event{}
+	for _, ev := range log.events {
+		if ev.ChannelID == 0 || ev.Total != 2 {
+			t.Fatalf("event without channel metadata: %+v", ev)
+		}
+		last[ev.ChannelID] = ev
+	}
+	if ev := last[1]; ev.Stage != progress.StageDone || ev.ChannelName != "good" || ev.Index != 1 {
+		t.Fatalf("good channel last event = %+v", ev)
+	}
+	if ev := last[2]; ev.Stage != progress.StageError || ev.ChannelName != "bad" || ev.Index != 2 || !strings.Contains(ev.Message, "同步失败") {
+		t.Fatalf("bad channel last event = %+v", ev)
 	}
 }

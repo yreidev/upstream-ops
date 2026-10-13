@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/jobs"
 	"github.com/yreidev/upstream-ops/backend/monitor"
 	"github.com/yreidev/upstream-ops/backend/storage"
 	"gorm.io/gorm"
@@ -50,6 +50,8 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 		t.Fatalf("sync announcement: %v", err)
 	}
 
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	jobRepo := storage.NewBackgroundJobs(db)
 	s := New(
 		config.SchedulerConfig{
 			Retention: config.RetentionConfig{
@@ -63,8 +65,8 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 		announcements,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
+		log,
+	).WithJobs(jobs.NewRunner(jobRepo, log))
 
 	s.runRetention()
 
@@ -75,18 +77,23 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 	if total != 0 || len(list) != 0 {
 		t.Fatalf("announcements not cleaned: total=%d list=%#v", total, list)
 	}
+
+	// 每轮定时任务记一条后台任务
+	recorded, n, err := jobRepo.List(storage.JobFilter{Kind: storage.JobRetention}, 1, 10)
+	if err != nil || n != 1 {
+		t.Fatalf("retention jobs = %d, %v", n, err)
+	}
+	if got := recorded[0]; got.Source != storage.JobScheduled || got.Status != storage.JobSucceeded || got.Message != "删除了上游公告 1 条" {
+		t.Fatalf("retention job = %+v", got)
+	}
 }
 
 func TestRunRatesCallsHookAfterScan(t *testing.T) {
 	calls := 0
-	hasDeadline := false
 	s := New(config.SchedulerConfig{}, nil, nil, nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).
-		OnRatesScanned(func(ctx context.Context) {
-			calls++
-			_, hasDeadline = ctx.Deadline()
-		})
+		OnRatesScanned(func() { calls++ })
 	s.runRates()
-	if calls != 1 || !hasDeadline {
-		t.Fatalf("hook calls = %d, has deadline = %v", calls, hasDeadline)
+	if calls != 1 {
+		t.Fatalf("hook calls = %d", calls)
 	}
 }

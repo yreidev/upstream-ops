@@ -46,21 +46,40 @@ func NewService(
 	}
 }
 
-// ScanAllBalances 扫描所有启用监控的渠道余额。单个失败不影响其他。
+// ScanAllBalances 采集所有启用监控的渠道的余额和消费，单个失败不影响其他。
 // 定时任务调用，受登录退避限制（见 channel.WithScheduled）。
-func (s *Service) ScanAllBalances(ctx context.Context) {
-	ctx = channel.WithScheduled(ctx)
+func (s *Service) ScanAllBalances(ctx context.Context) (*ScanSummary, error) {
 	list, err := s.channels.ListMonitorEnabled()
 	if err != nil {
-		s.log.Error("list channels", "err", err)
-		return
+		return nil, fmt.Errorf("读取渠道列表：%w", err)
 	}
+	return s.refreshBalances(channel.WithScheduled(ctx), list), nil
+}
+
+// SyncAllBalances 是手动的“全部同步”：采集全部渠道（含暂停监控的）的余额和消费，不受登录退避限制。
+func (s *Service) SyncAllBalances(ctx context.Context) (*ScanSummary, error) {
+	list, err := s.channels.List()
+	if err != nil {
+		return nil, fmt.Errorf("读取渠道列表：%w", err)
+	}
+	return s.refreshBalances(ctx, list), nil
+}
+
+func (s *Service) refreshBalances(ctx context.Context, list []storage.Channel) *ScanSummary {
+	sum := &ScanSummary{Total: len(list)}
 	for i := range list {
+		if ctx.Err() != nil {
+			break
+		}
 		c := list[i]
-		if err := s.RefreshBalance(ctx, &c); err != nil {
+		cctx := progress.ForChannel(ctx, c.ID, c.Name, i+1, len(list))
+		err := s.RefreshBalance(cctx, &c)
+		if err != nil {
 			s.logScanError("refresh balance failed", c.Name, err)
 		}
+		sum.record(cctx, c.Name, err)
 	}
+	return sum
 }
 
 func (s *Service) logScanError(msg, channelName string, err error) {
@@ -71,24 +90,31 @@ func (s *Service) logScanError(msg, channelName string, err error) {
 	s.log.Warn(msg, "channel", channelName, "err", err)
 }
 
-// ScanAllRates 扫描所有启用监控的渠道倍率。定时任务调用，受登录退避限制。
-func (s *Service) ScanAllRates(ctx context.Context) {
+// ScanAllRates 采集所有启用监控的渠道倍率。定时任务调用，受登录退避限制。
+func (s *Service) ScanAllRates(ctx context.Context) (*ScanSummary, error) {
 	ctx = channel.WithScheduled(ctx)
 	list, err := s.channels.ListMonitorEnabled()
 	if err != nil {
-		s.log.Error("list channels", "err", err)
-		return
+		return nil, fmt.Errorf("读取渠道列表：%w", err)
 	}
+	sum := &ScanSummary{Total: len(list)}
 	batch := notify.RateNotificationBatch{}
 	for i := range list {
+		if ctx.Err() != nil {
+			break
+		}
 		c := list[i]
-		if err := s.refreshRates(ctx, &c, &batch); err != nil {
+		cctx := progress.ForChannel(ctx, c.ID, c.Name, i+1, len(list))
+		err := s.refreshRates(cctx, &c, &batch)
+		if err != nil {
 			s.logScanError("refresh rates failed", c.Name, err)
 		}
+		sum.record(cctx, c.Name, err)
 	}
 	if !batch.Empty() {
 		_ = s.dispatcher.DispatchRateNotificationBatch(ctx, batch)
 	}
+	return sum, nil
 }
 
 // RefreshBalance 单个渠道余额刷新，可被 API 手动触发。

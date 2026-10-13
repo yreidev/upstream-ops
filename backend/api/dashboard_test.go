@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +14,6 @@ import (
 	"github.com/yreidev/upstream-ops/backend/channel"
 	_ "github.com/yreidev/upstream-ops/backend/connector/sub2api"
 	"github.com/yreidev/upstream-ops/backend/crypto"
-	"github.com/yreidev/upstream-ops/backend/progress"
 	"github.com/yreidev/upstream-ops/backend/storage"
 	"gorm.io/gorm"
 )
@@ -587,76 +585,6 @@ func TestDashboardCostTrend(t *testing.T) {
 	}
 }
 
-func TestSyncAllChannelsEmitsChannelMetadata(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	db := openTestDB(t)
-	channels := storage.NewChannels(db)
-	rates := storage.NewRates(db)
-	notifies := storage.NewNotifications(db)
-
-	if err := channels.Create(&storage.Channel{
-		Name:           "a",
-		Type:           storage.ChannelTypeNewAPI,
-		SiteURL:        "https://a.example.com",
-		Username:       "u1",
-		PasswordCipher: "x",
-		MonitorEnabled: true,
-	}); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-
-	r := gin.New()
-	api := r.Group("/api")
-	registerChannels(api, &Deps{
-		Channels: channels,
-		Rates:    rates,
-		Notifies: notifies,
-		Monitor:  &stubMonitor{},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/api/channels/sync-all", nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
-		t.Fatalf("content-type = %q", ct)
-	}
-	if body := rec.Body.String(); body == "" {
-		t.Fatal("expected sse body")
-	}
-	first := findFirstJSONBody(rec.Body.String())
-	if !json.Valid([]byte(first)) {
-		t.Fatal("invalid sse payload")
-	}
-	var ev struct {
-		Stage     string `json:"stage"`
-		ChannelID uint   `json:"channel_id"`
-		Index     int    `json:"index"`
-		Total     int    `json:"total"`
-	}
-	if err := json.Unmarshal([]byte(first), &ev); err != nil {
-		t.Fatalf("decode sse payload: %v", err)
-	}
-	if ev.ChannelID != 1 || ev.Index != 1 || ev.Total != 1 {
-		t.Fatalf("metadata mismatch: %#v", ev)
-	}
-}
-
-type stubMonitor struct{}
-
-func (s *stubMonitor) RefreshBalance(ctx context.Context, c *storage.Channel) error {
-	progress.OK(ctx, progress.StageBalance, "ok")
-	return nil
-}
-
-func (s *stubMonitor) RefreshRates(ctx context.Context, c *storage.Channel) error {
-	return nil
-}
-
 func mustEncryptAPI(t *testing.T, cipher *crypto.Cipher, plain string) string {
 	t.Helper()
 	out, err := cipher.Encrypt(plain)
@@ -664,34 +592,6 @@ func mustEncryptAPI(t *testing.T, cipher *crypto.Cipher, plain string) string {
 		t.Fatalf("encrypt: %v", err)
 	}
 	return out
-}
-
-func findFirstJSONBody(s string) string {
-	start := -1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '{' {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return ""
-	}
-	end := start
-	depth := 0
-	for i := start; i < len(s); i++ {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				end = i + 1
-				return s[start:end]
-			}
-		}
-	}
-	return ""
 }
 
 func TestDeleteChannelCleansHistories(t *testing.T) {

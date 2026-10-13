@@ -7,14 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/cch"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 type fakeCCHSync struct {
-	saved   cch.SettingsInput
-	runErr  error
-	runCall int
+	saved  cch.SettingsInput
+	runErr error
 }
 
 func (f *fakeCCHSync) Settings() (*cch.SettingsView, error) {
@@ -30,19 +29,20 @@ func (f *fakeCCHSync) Preview(context.Context) (*cch.Result, error) {
 	return nil, cch.ErrNotConfigured
 }
 
-func (f *fakeCCHSync) RunNow(context.Context) (*cch.Result, error) {
-	f.runCall++
+func (f *fakeCCHSync) RunNow(context.Context) (string, any, error) {
 	if f.runErr != nil {
-		return nil, f.runErr
+		return "", nil, f.runErr
 	}
-	return &cch.Result{Applied: true, Updated: 1}, nil
+	r := &cch.Result{Applied: true, Updated: 1}
+	return r.Summary(), r, nil
 }
 
 func TestCCHSyncRoutes(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	env := newJobTestEnv(t)
 	fake := &fakeCCHSync{}
-	r := gin.New()
-	registerCCHSync(r.Group("/api"), &Deps{CCHSync: fake})
+	env.deps.CCHSync = fake
+	r := env.r
+	registerCCHSync(r.Group("/api"), env.deps)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -62,15 +62,18 @@ func TestCCHSyncRoutes(t *testing.T) {
 	if rec := do(http.MethodPost, "/api/cch-sync/preview", ""); rec.Code != http.StatusBadRequest {
 		t.Fatalf("preview without config = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := do(http.MethodPost, "/api/cch-sync/run", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"updated":1`) {
-		t.Fatalf("run = %d %s", rec.Code, rec.Body.String())
+	// 立即同步在后台跑，结果记在任务里
+	code, started := env.start(t, context.Background(), "/api/cch-sync/run")
+	if code != http.StatusAccepted || started.Job.Kind != storage.JobCCHSync {
+		t.Fatalf("run = %d %+v", code, started)
 	}
-	fake.runErr = cch.ErrBusy
-	if rec := do(http.MethodPost, "/api/cch-sync/run", ""); rec.Code != http.StatusConflict {
-		t.Fatalf("busy run = %d %s", rec.Code, rec.Body.String())
+	done := env.wait(t, started.Job.ID)
+	if done.Status != storage.JobSucceeded || done.Message != "改了 1 个，已一致 0 个" || !strings.Contains(string(done.Result), `"updated":1`) {
+		t.Fatalf("run job = %+v result=%s", done, done.Result)
 	}
 	fake.runErr = &cch.APIError{Status: 401}
-	if rec := do(http.MethodPost, "/api/cch-sync/run", ""); rec.Code != http.StatusBadGateway {
-		t.Fatalf("cch error run = %d %s", rec.Code, rec.Body.String())
+	_, started = env.start(t, context.Background(), "/api/cch-sync/run")
+	if done := env.wait(t, started.Job.ID); done.Status != storage.JobFailed || !strings.Contains(done.Message, "CCH 返回 401") {
+		t.Fatalf("cch error job = %+v", done)
 	}
 }
