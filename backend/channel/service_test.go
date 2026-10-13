@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -443,6 +444,72 @@ func TestEnsureSessionSerializesRefreshByChannel(t *testing.T) {
 	}
 	if got := refreshCalls.Load(); got != 1 {
 		t.Fatalf("refresh calls = %d, want 1", got)
+	}
+}
+
+// 浏览器断开连接取消了请求：会话校验返回错误，但不写失败的监控日志、不改 last_error，会话保留。
+func TestEnsureSessionCanceledCheckIsNotRecorded(t *testing.T) {
+	checkStarted := make(chan struct{})
+	var startOnce sync.Once
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user/self", func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(checkStarted) })
+		<-r.Context().Done()
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	svc, ch, resolved, conn := newStoredNewAPIChannel(t, srv.URL)
+	if err := svc.persistSession(ch.ID, &connector.AuthSession{
+		UserID:       "9",
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("persist session: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-checkStarted
+		cancel()
+	}()
+	if _, err := svc.EnsureSession(ctx, ch, resolved, conn); !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnsureSession error = %v, want context.Canceled", err)
+	}
+
+	updated, err := svc.Channels.FindByID(ch.ID)
+	if err != nil {
+		t.Fatalf("find channel: %v", err)
+	}
+	if updated.LastError != "" {
+		t.Fatalf("last error = %q, want empty", updated.LastError)
+	}
+	logs, err := svc.MonitorLogs.List(ch.ID, 10)
+	if err != nil {
+		t.Fatalf("list monitor logs: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Fatalf("monitor logs = %#v, want none", logs)
+	}
+	if saved, err := svc.AuthSessions.FindByChannel(ch.ID); err != nil || saved == nil {
+		t.Fatalf("stored session = %#v, err = %v; want preserved", saved, err)
+	}
+}
+
+func TestIsCanceledIgnoresDeadline(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !IsCanceled(canceled) {
+		t.Fatal("IsCanceled(canceled) = false, want true")
+	}
+	expired, cancelExpired := context.WithTimeout(context.Background(), -time.Second)
+	defer cancelExpired()
+	if IsCanceled(expired) {
+		t.Fatal("IsCanceled(deadline exceeded) = true, want false")
+	}
+	if IsCanceled(context.Background()) {
+		t.Fatal("IsCanceled(background) = true, want false")
 	}
 }
 

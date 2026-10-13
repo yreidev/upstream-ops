@@ -101,7 +101,7 @@ func (s *Service) RefreshBalance(ctx context.Context, c *storage.Channel) error 
 	progress.Start(ctx, progress.StageBalance, "拉取余额…")
 	started := time.Now()
 	res, err := conn.GetBalance(ctx, resolved, session)
-	s.appendMonitorLog(c.ID, storage.MonitorJobBalance, started, err)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobBalance, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageBalance, err.Error())
 		s.reportFailure(ctx, c, notify.FailureBalance, err)
@@ -138,7 +138,7 @@ func (s *Service) RefreshBalance(ctx context.Context, c *storage.Channel) error 
 	progress.Start(ctx, progress.StageCost, "拉取消费…")
 	started = time.Now()
 	costRes, err := conn.GetCosts(ctx, resolved, session)
-	s.appendMonitorLog(c.ID, storage.MonitorJobCosts, started, err)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobCosts, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageCost, err.Error())
 		s.reportFailure(ctx, c, notify.FailureCosts, err)
@@ -181,7 +181,7 @@ func (s *Service) refreshRates(ctx context.Context, c *storage.Channel, batch *n
 	progress.Start(ctx, progress.StageRates, "拉取分组倍率…")
 	started := time.Now()
 	results, err := conn.GetRates(ctx, resolved, session)
-	s.appendMonitorLog(c.ID, storage.MonitorJobRates, started, err)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobRates, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageRates, err.Error())
 		s.reportFailure(ctx, c, notify.FailureRates, err)
@@ -366,7 +366,7 @@ func prepareFailureKind(err error) notify.FailureKind {
 
 // reportFailure 交给 Dispatcher 做失败去重；永久错误（密码错误、打码余额不足等）立即通知。
 func (s *Service) reportFailure(ctx context.Context, c *storage.Channel, kind notify.FailureKind, err error) {
-	if ctx.Err() == context.Canceled {
+	if channel.IsCanceled(ctx) {
 		return // 手动刷新时用户关掉了页面，不算失败
 	}
 	if reportErr := s.dispatcher.ReportFailure(ctx, notify.Failure{
@@ -386,7 +386,11 @@ func (s *Service) reportSuccess(ctx context.Context, c *storage.Channel, kinds .
 	}
 }
 
-func (s *Service) appendMonitorLog(channelID uint, job storage.MonitorJob, started time.Time, err error) {
+// appendMonitorLog 写一条监控日志；调用方取消导致的失败不记录，见 channel.IsCanceled。
+func (s *Service) appendMonitorLog(ctx context.Context, channelID uint, job storage.MonitorJob, started time.Time, err error) {
+	if err != nil && channel.IsCanceled(ctx) {
+		return
+	}
 	_ = s.monitorLogs.Append(&storage.MonitorLog{
 		ChannelID:    channelID,
 		Job:          job,

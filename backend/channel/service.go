@@ -674,7 +674,9 @@ func (s *Service) ensureTokenSession(
 				refreshErr = &LoginError{Err: refreshErr}
 			}
 			progress.Fail(ctx, progress.StageSession, refreshErr.Error())
-			_ = s.Channels.SetLastError(c.ID, refreshErr.Error())
+			if !IsCanceled(ctx) {
+				_ = s.Channels.SetLastError(c.ID, refreshErr.Error())
+			}
 			return nil, refreshErr
 		} else if ok {
 			return refreshed, nil
@@ -688,15 +690,25 @@ func (s *Service) ensureTokenSession(
 }
 
 // sessionFailed 记录一次校验 / 刷新会话失败：写监控日志、进度和 last_error，原样返回 err。
+// 调用方取消时只写进度，见 IsCanceled。
 func (s *Service) sessionFailed(ctx context.Context, channelID uint, started time.Time, err error) error {
-	s.appendMonitorLog(channelID, storage.MonitorJobSession, started, err)
+	s.appendMonitorLog(ctx, channelID, storage.MonitorJobSession, started, err)
 	progress.Fail(ctx, progress.StageSession, err.Error())
-	_ = s.Channels.SetLastError(channelID, err.Error())
+	if !IsCanceled(ctx) {
+		_ = s.Channels.SetLastError(channelID, err.Error())
+	}
 	return err
 }
 
-func (s *Service) appendMonitorLog(channelID uint, job storage.MonitorJob, started time.Time, err error) {
-	if s.MonitorLogs == nil {
+// IsCanceled 判断 ctx 是否被调用方取消：手动操作时浏览器断开连接（刷新、关闭页面）、服务关停。
+// 这不是上游或凭据的问题，不写失败的监控日志、不改 last_error、不通知；超时仍按失败处理。
+func IsCanceled(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.Canceled)
+}
+
+// appendMonitorLog 写一条监控日志；调用方取消导致的失败不记录，见 IsCanceled。
+func (s *Service) appendMonitorLog(ctx context.Context, channelID uint, job storage.MonitorJob, started time.Time, err error) {
+	if s.MonitorLogs == nil || (err != nil && IsCanceled(ctx)) {
 		return
 	}
 	_ = s.MonitorLogs.Append(&storage.MonitorLog{
@@ -733,7 +745,7 @@ func (s *Service) refreshStoredSession(
 		if !connector.ShouldLoginAfterRefreshError(err) || connector.IsTransient(err) || ctx.Err() != nil {
 			return nil, false, s.sessionFailed(ctx, c.ID, started, err)
 		}
-		s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, err)
+		s.appendMonitorLog(ctx, c.ID, storage.MonitorJobSession, started, err)
 		progress.OK(ctx, progress.StageSession, "刷新失败，重新登录")
 		return nil, false, nil
 	}
@@ -741,7 +753,7 @@ func (s *Service) refreshStoredSession(
 		progress.Fail(ctx, progress.StageSession, err.Error())
 		return nil, false, err
 	}
-	s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, nil)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobSession, started, nil)
 	_ = s.Channels.SetLastError(c.ID, "")
 	progress.OK(ctx, progress.StageSession, "会话刷新成功")
 	return refreshed, true, nil
@@ -760,7 +772,7 @@ func (s *Service) refreshProvidedTokenSession(
 	progress.Start(ctx, progress.StageSession, "使用 refresh_token 刷新 token…")
 	started := time.Now()
 	refreshed, err := s.refreshAndCheckToken(ctx, c, resolved, conn, session)
-	s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, err)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobSession, started, err)
 	if err != nil {
 		return nil, false, err
 	}
@@ -856,10 +868,15 @@ func (s *Service) login(
 	}
 	started := time.Now()
 	session, err := s.attemptLogin(ctx, c, resolved, conn)
+	if err != nil && IsCanceled(ctx) {
+		// 调用方取消：不记失败、不删已保存的会话，下一轮照常登录。
+		progress.Fail(ctx, progress.StageLogin, err.Error())
+		return nil, err
+	}
 	if err != nil && ctx.Err() == nil && s.loginBackoffs.recordFailure(c, err, time.Now()) {
 		err = fmt.Errorf("%w%s", err, autoLoginPausedNote)
 	}
-	s.appendMonitorLog(c.ID, storage.MonitorJobLogin, started, err)
+	s.appendMonitorLog(ctx, c.ID, storage.MonitorJobLogin, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageLogin, err.Error())
 		_ = s.AuthSessions.Delete(c.ID)
