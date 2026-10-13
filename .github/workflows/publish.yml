@@ -23,6 +23,11 @@ permissions:
   contents: read
   packages: write
 
+# 同一分支或 tag 有新的推送时，取消还没跑完的旧构建。
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -32,18 +37,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      # QEMU 让 amd64 runner 能跑 arm64 emulation 出 ARM 镜像。
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # 用 GITHUB_TOKEN 登录 ghcr.io，不需要额外配 secret。
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -53,7 +54,7 @@ jobs:
       # 任何场景都额外加一个 sha-xxxxxxx 作为不可变快照。
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -67,14 +68,14 @@ jobs:
           flavor: |
             latest=false
 
-      # 多架构构建 + 推送。GitHub Actions 内置 cache (type=gha) 把
-      # 前端 pnpm install 和后端 go mod download 都缓存住，二次构建 1-2 分钟。
+      # 只构建 amd64（部署的 k3s 是 amd64）。arm64 要靠 QEMU 模拟编译，单次就要几十分钟，所以不构建。
+      # GitHub Actions 内置 cache (type=gha) 会缓存前端 pnpm install 和后端 go mod download。
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

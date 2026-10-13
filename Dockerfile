@@ -10,12 +10,11 @@
 #   或在 docker-compose 里写 context: .
 
 # ---------- Stage 1: 前端 ----------
-FROM node:20-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 WORKDIR /web
 
-# pnpm-workspace.yaml 用了 allowBuilds: 这种 pnpm 10.4+ 才支持的字段，
-# corepack 默认的 pnpm shim 版本可能太旧，显式 pin 一个已知兼容版本。
-RUN corepack enable && corepack prepare pnpm@10.4.0 --activate
+# 与 package.json 的 packageManager 保持一致；corepack 已从新版 Node 移除，直接用 npm 装。
+RUN npm install -g pnpm@12.11.2
 
 # 先拷依赖清单走缓存层
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
@@ -28,7 +27,7 @@ COPY frontend/ ./
 RUN pnpm build
 
 # ---------- Stage 2: 后端 ----------
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.27-alpine AS go-builder
 WORKDIR /src
 
 # 先 go.mod / go.sum 走缓存
@@ -49,7 +48,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         ./cmd/server
 
 # ---------- Stage 3: 运行时 ----------
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata wget && \
     mkdir -p /app/data
 WORKDIR /app

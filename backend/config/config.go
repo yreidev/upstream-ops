@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/yreidev/upstream-ops/backend/storage"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
