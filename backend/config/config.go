@@ -68,7 +68,6 @@ type AuthConfig struct {
 type SchedulerConfig struct {
 	BalanceCron string          `mapstructure:"balanceCron" yaml:"balanceCron" json:"balanceCron"`
 	RateCron    string          `mapstructure:"rateCron" yaml:"rateCron" json:"rateCron"`
-	Concurrency int             `mapstructure:"concurrency" yaml:"concurrency" json:"concurrency"`
 	Retention   RetentionConfig `mapstructure:"retention" yaml:"retention" json:"retention"`
 }
 
@@ -248,7 +247,6 @@ func setDefaults(v *viper.Viper) {
 	// CLAUDE.md 默认建议：余额 15 分钟，倍率 30 分钟。
 	v.SetDefault("scheduler.balanceCron", "37 */15 * * * *")
 	v.SetDefault("scheduler.rateCron", "13 */30 * * * *")
-	v.SetDefault("scheduler.concurrency", 4)
 
 	// 历史清理：每天凌晨 3:17 跑一次（6 字段 cron 含秒），
 	// monitor 30 天 / balance 90 天 / notify 90 天。rate_change_logs 不清理（业务核心数据）。

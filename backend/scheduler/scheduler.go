@@ -14,6 +14,15 @@ import (
 	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
+// specParser 和 cron.WithSeconds() 的规则相同：带秒，共 6 段，也认 @every 这类写法。
+var specParser = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
+// ParseSpec 按调度器的规则检查 cron 表达式，保存配置前用它拦住写错的表达式。
+func ParseSpec(spec string) error {
+	_, err := specParser.Parse(spec)
+	return err
+}
+
 // Scheduler 周期性任务调度器。
 type Scheduler struct {
 	cfg           config.SchedulerConfig
@@ -44,7 +53,7 @@ func New(
 	return &Scheduler{
 		cfg:           cfg,
 		log:           log,
-		cron:          cron.New(cron.WithSeconds()),
+		cron:          cron.New(cron.WithParser(specParser)),
 		monitor:       m,
 		monLogs:       monLogs,
 		rates:         rates,
@@ -83,7 +92,6 @@ func (s *Scheduler) Start() error {
 		"balanceCron", s.cfg.BalanceCron,
 		"rateCron", s.cfg.RateCron,
 		"retentionCron", s.cfg.Retention.Cron,
-		"concurrency", s.cfg.Concurrency,
 	)
 	return nil
 }

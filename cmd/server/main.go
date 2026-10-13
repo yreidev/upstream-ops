@@ -132,6 +132,7 @@ func main() {
 		channelSvc,
 		authSvc,
 		sch,
+		cfg.App,
 		cfg.Upstream,
 		schedulerFactory,
 	)

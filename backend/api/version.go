@@ -61,11 +61,10 @@ func registerVersion(api *gin.RouterGroup, d *Deps) {
 }
 
 func buildVersionResponse(ctx context.Context, d *Deps) versionResponse {
+	// 用正在生效的标题：直接读配置文件会漏掉环境变量 APP_TITLE
 	app := config.AppConfig{Title: "UpstreamOps"}
 	if d != nil && d.Runtime != nil {
-		if cfg, err := config.LoadFile(d.Runtime.ConfigPath()); err == nil {
-			app = cfg.App
-		}
+		app = d.Runtime.CurrentApp()
 	}
 
 	resp := versionResponse{

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,7 +29,6 @@ func registerSettings(g *gin.RouterGroup, d *Deps) {
 	gs := g.Group("/settings")
 	gs.GET("/config", func(c *gin.Context) { getSettingsConfig(c, d) })
 	gs.PUT("/config", func(c *gin.Context) { saveSettingsConfig(c, d) })
-	gs.POST("/apply", func(c *gin.Context) { applySettingsConfig(c, d) })
 }
 
 // settingsKeys 设置页能改的配置项路径。
@@ -45,7 +45,7 @@ var settingsKeys = func() []string {
 	return out
 }()
 
-// getSettingsConfig 返回实际生效的配置（环境变量盖过配置文件，和启动、应用时一致），
+// getSettingsConfig 返回实际生效的配置（环境变量盖过配置文件，和启动、保存时一致），
 // 并标出哪些项由环境变量决定，页面上锁住不让改。
 func getSettingsConfig(c *gin.Context, d *Deps) {
 	path := d.Runtime.ConfigPath()
@@ -77,7 +77,8 @@ func getSettingsConfig(c *gin.Context, d *Deps) {
 	})
 }
 
-// saveSettingsConfig 只写配置文件；由环境变量决定的项保留文件里原来的值，不把环境变量（尤其是密码）抄进文件。
+// saveSettingsConfig 检查后写入配置文件并立即生效。由环境变量决定的项保留文件里原来的值，
+// 不把环境变量（尤其是密码）抄进文件；生效时这些项仍以环境变量为准，和启动时一致。
 func saveSettingsConfig(c *gin.Context, d *Deps) {
 	var in settingsConfigInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -87,6 +88,11 @@ func saveSettingsConfig(c *gin.Context, d *Deps) {
 
 	path := d.Runtime.ConfigPath()
 	cfg, err := config.LoadFile(path)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	withEnv, err := config.Load(path)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err)
 		return
@@ -105,25 +111,26 @@ func saveSettingsConfig(c *gin.Context, d *Deps) {
 		locked = append(locked, key)
 	}
 	config.CopyKeys(cfg, &original, locked)
+	effective := *cfg
+	config.CopyKeys(&effective, withEnv, locked)
 
+	if err := d.Runtime.Validate(&effective); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
 	if err := config.Save(path, cfg); err != nil {
 		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	if err := d.Runtime.Apply(&effective); err != nil {
+		fail(c, http.StatusInternalServerError, fmt.Errorf("已写入配置文件，但没能生效：%w", err))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
 			"config_path": path,
-			"message":     "已写入配置文件",
+			"message":     "已保存，立即生效",
 		},
 	})
-}
-
-func applySettingsConfig(c *gin.Context, d *Deps) {
-	result, err := d.Runtime.ApplyFromFile()
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": result})
 }

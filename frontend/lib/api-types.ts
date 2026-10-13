@@ -250,7 +250,6 @@ export interface SystemSchedulerRetentionConfig {
 export interface SystemSchedulerConfig {
   balanceCron: string
   rateCron: string
-  concurrency: number
   retention: SystemSchedulerRetentionConfig
 }
 
@@ -339,11 +338,6 @@ export interface CCHSyncResult {
   updated: number
   failed: number
   skipped: number
-}
-
-export interface ApplyConfigResult {
-  applied_sections: string[]
-  message: string
 }
 
 export interface ChannelRedeemResult {

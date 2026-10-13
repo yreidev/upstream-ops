@@ -4,6 +4,7 @@ package runtimeconfig
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,12 +28,8 @@ type Manager struct {
 	schedulerFactory SchedulerFactory
 	auth             *auth.Service
 	scheduler        *scheduler.Scheduler
+	appConfig        config.AppConfig
 	upstreamConfig   config.UpstreamConfig
-}
-
-type ApplyResult struct {
-	AppliedSections []string `json:"applied_sections"`
-	Message         string   `json:"message"`
 }
 
 func New(
@@ -43,6 +40,7 @@ func New(
 	channelSvc *channel.Service,
 	authSvc *auth.Service,
 	schedulerSvc *scheduler.Scheduler,
+	appConfig config.AppConfig,
 	upstreamConfig config.UpstreamConfig,
 	schedulerFactory SchedulerFactory,
 ) *Manager {
@@ -55,6 +53,7 @@ func New(
 		schedulerFactory: schedulerFactory,
 		auth:             authSvc,
 		scheduler:        schedulerSvc,
+		appConfig:        appConfig,
 		upstreamConfig:   upstreamConfig.WithDefaults(),
 	}
 }
@@ -69,6 +68,13 @@ func (m *Manager) CurrentAuth() *auth.Service {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.auth
+}
+
+// CurrentApp 返回正在生效的应用信息（标题、通知前缀）。
+func (m *Manager) CurrentApp() config.AppConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.appConfig
 }
 
 func (m *Manager) CurrentUpstream() config.UpstreamConfig {
@@ -101,9 +107,51 @@ func (m *Manager) AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-func (m *Manager) ApplyFromFile() (*ApplyResult, error) {
+// Validate 检查设置页能改的配置能不能生效，有错返回给页面的中文说明。
+// 保存前先调用：写错的 cron 一旦写进配置文件，下次启动调度器起不来，进程会直接退出。
+func (m *Manager) Validate(cfg *config.Config) error {
+	crons := []struct{ label, spec string }{
+		{"余额采集 Cron", cfg.Scheduler.BalanceCron},
+		{"倍率采集 Cron", cfg.Scheduler.RateCron},
+		{"清理任务 Cron", cfg.Scheduler.Retention.Cron},
+	}
+	for _, c := range crons {
+		if c.spec == "" {
+			continue
+		}
+		if scheduler.ParseSpec(c.spec) != nil {
+			return cronError(c.label, c.spec)
+		}
+	}
+	if cfg.Auth.Enabled {
+		if cfg.Auth.Username == "" {
+			return fmt.Errorf("启用登录时管理员账号不能为空")
+		}
+		if cfg.Auth.Password == "" {
+			return fmt.Errorf("启用登录时管理员密码不能为空")
+		}
+		m.mu.RLock()
+		secret := m.securitySecret
+		m.mu.RUnlock()
+		if cfg.Auth.TokenSecret == "" && secret == "" {
+			return fmt.Errorf("启用登录时令牌签名密钥不能为空（也没有设置安全主密钥 APP_SECRET 可以替代）")
+		}
+	}
+	return nil
+}
+
+// cronError 给出中文说明；cron 库的报错是英文，不直接给页面。
+func cronError(label, spec string) error {
+	if n := len(strings.Fields(spec)); !strings.HasPrefix(spec, "@") && n != 6 {
+		return fmt.Errorf("%s 写法不对：要带秒，共 6 段（秒 分 时 日 月 周），现在是 %d 段。例如每 15 分钟：0 */15 * * * *", label, n)
+	}
+	return fmt.Errorf("%s 写法不对：6 段依次是秒 分 时 日 月 周，有一段的数值或写法不对。例如每 15 分钟：0 */15 * * * *", label)
+}
+
+// Apply 让 cfg 里的应用信息、鉴权、调度、通知策略和上游请求配置立即生效。
+// 先把可能失败的鉴权和新调度器准备好，再一起替换，失败时保持原来的配置不动。
+func (m *Manager) Apply(cfg *config.Config) error {
 	m.mu.RLock()
-	path := m.configPath
 	secret := m.securitySecret
 	dispatcher := m.dispatcher
 	channelSvc := m.channelSvc
@@ -111,15 +159,13 @@ func (m *Manager) ApplyFromFile() (*ApplyResult, error) {
 	oldScheduler := m.scheduler
 	m.mu.RUnlock()
 
-	// 和启动时一样让环境变量盖过配置文件，否则只靠环境变量开的登录会在“应用”后被关掉。
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, err
-	}
-
 	authSvc, err := buildAuth(cfg.Auth, secret)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	newScheduler := factory(cfg.Scheduler)
+	if err := newScheduler.Start(); err != nil {
+		return err
 	}
 
 	if dispatcher != nil {
@@ -134,33 +180,20 @@ func (m *Manager) ApplyFromFile() (*ApplyResult, error) {
 		channelSvc.UpdateUpstreamConfig(cfg.Upstream)
 	}
 
-	newScheduler := factory(cfg.Scheduler)
-	if err := newScheduler.Start(); err != nil {
-		return nil, err
-	}
-
 	m.mu.Lock()
 	m.auth = authSvc
 	m.scheduler = newScheduler
+	m.appConfig = cfg.App
 	m.upstreamConfig = cfg.Upstream.WithDefaults()
 	m.mu.Unlock()
 
 	if oldScheduler != nil {
 		oldScheduler.Stop()
 	}
-
-	sections := []string{"app", "auth", "scheduler", "notifications", "retention", "upstream"}
 	if m.log != nil {
-		m.log.Info("runtime config applied",
-			"sections", sections,
-			"config_path", path,
-		)
+		m.log.Info("runtime config applied", "config_path", m.ConfigPath())
 	}
-
-	return &ApplyResult{
-		AppliedSections: sections,
-		Message:         "app、auth、scheduler、notifications、retention、upstream 已立即生效",
-	}, nil
+	return nil
 }
 
 func buildAuth(cfg config.AuthConfig, securitySecret string) (*auth.Service, error) {

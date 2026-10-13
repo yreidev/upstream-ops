@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/layout/page-header"
 import { CCHSyncSection } from "@/components/settings/cch-sync-section"
 import { SettingsSection } from "@/components/settings/settings-section"
 import { apiFetch } from "@/lib/api"
-import type { ApplyConfigResult, SystemConfig } from "@/lib/api-types"
+import type { SystemConfig } from "@/lib/api-types"
 import { useSystemConfig } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
 import { useVersionCheck } from "@/hooks/use-version-check"
@@ -45,7 +45,6 @@ function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfi
       ...base.scheduler,
       balanceCron: str(v.scheduler?.balanceCron),
       rateCron: str(v.scheduler?.rateCron),
-      concurrency: num(v.scheduler?.concurrency),
       retention: {
         ...base.scheduler.retention,
         cron: str(v.scheduler?.retention?.cron),
@@ -75,9 +74,7 @@ export default function SettingsPage() {
   const versionCheck = useVersionCheck()
   const formApi = useRef<FormApi | null>(null)
   const [saving, setSaving] = useState(false)
-  const [applying, setApplying] = useState(false)
   const [dirty, setDirty] = useState(false)
-  const [pendingApply, setPendingApply] = useState(false)
   // 表单只在拿到配置后挂载一次；之后的定时刷新不覆盖正在编辑的内容
   const [initial, setInitial] = useState<SystemConfig | null>(null)
 
@@ -89,11 +86,13 @@ export default function SettingsPage() {
     try {
       const payload = buildPayload(initial, formApi.current.getValues() as Partial<SystemConfig>)
       await apiFetch("/settings/config", { method: "PUT", body: JSON.stringify(payload) })
-      Toast.success("已写入配置文件")
+      Toast.success("已保存，立即生效")
+      // 侧边栏和浏览器标签上的标题来自版本信息，改了标题就重新取一次
+      if (payload.app.title !== initial.app.title) versionCheck.reload()
       setInitial(payload)
       setDirty(false)
-      setPendingApply(true)
       query.refetch()
+      refresh()
     } catch (err) {
       Toast.error(err instanceof Error ? err.message : "保存失败")
     } finally {
@@ -101,25 +100,23 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleApply() {
-    setApplying(true)
-    try {
-      const result = await apiFetch<ApplyConfigResult>("/settings/apply", { method: "POST" })
-      Toast.success(result.message)
-      setPendingApply(false)
-      query.refetch()
-      refresh()
-    } catch (err) {
-      Toast.error(err instanceof Error ? err.message : "应用失败")
-    } finally {
-      setApplying(false)
-    }
-  }
-
+  const configPath = query.data?.config_path
   const header = (
     <PageHeader
       title="设置"
-      description="保存只写入配置文件，点“应用”后鉴权、调度、通知策略和上游请求立即生效。CCH 成本倍率同步在页面下方单独保存；通知渠道、打码平台在各自页面管理，改动实时生效。"
+      description={
+        <>
+          保存后立即生效，同时写入配置文件。CCH 成本倍率同步在页面下方单独保存；通知渠道、打码平台在各自页面管理，改动实时生效。
+          {configPath ? (
+            <span style={{ display: "block" }}>
+              配置文件：
+              <span className="mono" style={{ wordBreak: "break-all" }}>
+                {configPath}
+              </span>
+            </span>
+          ) : null}
+        </>
+      }
     />
   )
 
@@ -138,7 +135,7 @@ export default function SettingsPage() {
     )
   }
 
-  // 被环境变量管着的项：启动和“应用”都以环境变量为准，页面上改了也没用，所以锁住并注明
+  // 被环境变量管着的项：启动和保存后都以环境变量为准，页面上改了也没用，所以锁住并注明
   const envOverrides = query.data?.env_overrides ?? {}
   const lock = (field: string) =>
     envOverrides[field]
@@ -146,11 +143,6 @@ export default function SettingsPage() {
       : {}
 
   const v = versionCheck.version
-  const statusText = dirty
-    ? "有未保存的修改"
-    : pendingApply
-      ? "已保存，点“应用”后立即生效"
-      : "保存写入配置文件，应用让改动立即生效"
 
   return (
     <div className="page">
@@ -191,10 +183,10 @@ export default function SettingsPage() {
             <Form.Input field="app.notificationPrefix" label="通知前缀" extraText="加在通知标题前面，留空不加。" {...lock("app.notificationPrefix")} />
           </SettingsSection>
 
-          <SettingsSection title="登录鉴权" description="后台是否需要登录，以及登录令牌怎么签发。应用后立即生效。">
+          <SettingsSection title="登录鉴权" description="后台是否需要登录，以及登录令牌怎么签发。">
             <Form.Switch field="auth.enabled" label="启用登录" extraText="关闭后打开页面直接进入后台，不显示登录页。" {...lock("auth.enabled")} />
             <Form.Input field="auth.username" label="管理员账号" {...lock("auth.username")} />
-            <Form.Input field="auth.password" label="管理员密码" mode="password" extraText="应用后用于新的登录。" {...lock("auth.password")} />
+            <Form.Input field="auth.password" label="管理员密码" mode="password" extraText="保存后用于新的登录。" {...lock("auth.password")} />
             <Form.Input field="auth.tokenSecret" label="令牌签名密钥" mode="password" extraText="留空时使用安全主密钥。" {...lock("auth.tokenSecret")} />
             <Form.InputNumber field="auth.sessionTTLHours" label="登录有效期（小时）" min={0} style={{ width: "100%" }} {...lock("auth.sessionTTLHours")} />
           </SettingsSection>
@@ -202,7 +194,6 @@ export default function SettingsPage() {
           <SettingsSection title="调度与保留策略" description="余额采集、倍率采集和历史数据清理的周期。Cron 带秒，共 6 段。">
             <Form.Input field="scheduler.balanceCron" label="余额采集 Cron" extraText="余额与消费的同步周期。" className="mono" {...lock("scheduler.balanceCron")} />
             <Form.Input field="scheduler.rateCron" label="倍率采集 Cron" extraText="分组倍率的扫描周期。" className="mono" {...lock("scheduler.rateCron")} />
-            <Form.InputNumber field="scheduler.concurrency" label="并发数" extraText="每轮最多同时处理的渠道数。" min={1} style={{ width: "100%" }} {...lock("scheduler.concurrency")} />
             <Form.Input field="scheduler.retention.cron" label="清理任务 Cron" extraText="留空则不清理历史数据。" className="mono" {...lock("scheduler.retention.cron")} />
             <Form.InputNumber field="scheduler.retention.monitorLogsDays" label="监控日志保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.monitorLogsDays")} />
             <Form.InputNumber field="scheduler.retention.balanceSnapshotsDays" label="余额快照保留天数" extraText="余额与消费趋势图用这些数据。0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.balanceSnapshotsDays")} />
@@ -223,20 +214,10 @@ export default function SettingsPage() {
         </Form>
 
         <div className="sticky-actions">
-          <Typography.Text type={dirty || pendingApply ? "warning" : "tertiary"} size="small">
-            {statusText}
+          <Typography.Text type={dirty ? "warning" : "tertiary"} size="small" style={{ flex: 1, minWidth: 0 }}>
+            {dirty ? "有未保存的修改" : "保存后立即生效"}
           </Typography.Text>
-          {query.data?.config_path ? (
-            <Typography.Text type="tertiary" size="small" className="mono truncate" style={{ flex: 1, minWidth: 0 }}>
-              {query.data.config_path}
-            </Typography.Text>
-          ) : (
-            <span style={{ flex: 1 }} />
-          )}
-          <Button onClick={handleApply} loading={applying} disabled={saving}>
-            应用
-          </Button>
-          <Button theme="solid" onClick={handleSave} loading={saving} disabled={applying}>
+          <Button theme="solid" onClick={handleSave} loading={saving}>
             保存
           </Button>
         </div>
