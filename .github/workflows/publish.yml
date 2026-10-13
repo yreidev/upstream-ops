@@ -1,15 +1,13 @@
 name: Publish Docker Image
 
 # 触发：
-#   - 推送到 main 分支             → 发 :edge 跟踪标签
 #   - 推送形如 v0.0.1 的 git tag    → 发 :v0.0.1 + :0.0 + :latest
 #   - 手动触发                      → 可填自定义 tag
+# 推送 main 分支不构建镜像，只由 ci.yml 跑测试；这里构建前也会先跑一遍 ci.yml。
 #
 # 所有构建都附带一个 :sha-xxxxxxx 短 hash tag，方便回滚到任意 commit。
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -33,7 +31,11 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,7 +52,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 根据触发场景自动算 tag：semver tag → v0.0.1 / 0.0 / latest；main → edge；
+      # 根据触发场景自动算 tag：semver tag → v0.0.1 / 0.0 / latest；
       # 任何场景都额外加一个 sha-xxxxxxx 作为不可变快照。
       - name: Extract Docker metadata
         id: meta
@@ -62,7 +64,6 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
             type=sha,prefix=sha-,format=short
           flavor: |

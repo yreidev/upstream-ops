@@ -1,0 +1,78 @@
+name: CI
+
+# 触发：
+#   - 推送到 main 分支        → 只跑测试，不构建镜像
+#   - 被 publish.yml 调用     → 推版本 tag 构建镜像前先跑一遍
+#   - 手动触发
+on:
+  push:
+    branches:
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 与 Dockerfile 的 golang 镜像保持一致；默认按 go.sum 缓存模块。
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l backend cmd web)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未 gofmt：" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # pnpm 版本取 package.json 的 packageManager。
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+
+      # 与 Dockerfile 的 node 镜像保持一致。
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Build
+        run: pnpm build
