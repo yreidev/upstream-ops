@@ -248,8 +248,9 @@ function RecentRateChanges() {
   const channelMap = useMemo(() => new Map((channels.data ?? []).map((c) => [c.id, c] as const)), [channels.data])
   const items = (summary.data?.recent_rate_changes ?? []).slice(0, PREVIEW_SIZE)
 
+  // 高度跟左边的走势卡片对齐，放不下的几条不显示，点“查看全部”看
   return (
-    <Card title="最近倍率变动" headerExtraContent={<SeeAll to="/rates" />} bodyStyle={{ padding: 0 }}>
+    <Card className="fill-card" title="最近倍率变动" headerExtraContent={<SeeAll to="/rates" />} bodyStyle={{ padding: 0 }}>
       {summary.loading && !summary.data ? (
         <div style={{ padding: 16 }}>
           <Skeleton placeholder={<Skeleton.Paragraph rows={6} />} loading active />
@@ -257,7 +258,7 @@ function RecentRateChanges() {
       ) : items.length === 0 ? (
         <Empty description="暂无倍率变动记录" style={{ padding: 32 }} />
       ) : (
-        <div className="list-rows" style={{ maxHeight: 384, overflowY: "auto" }}>
+        <div className="list-rows fit-rows">
           {items.map((item) => {
             const ch = channelMap.get(item.channel_id)
             const delta = ratioDelta(item.old_ratio, item.new_ratio)
