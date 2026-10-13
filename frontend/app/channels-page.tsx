@@ -502,7 +502,8 @@ export default function ChannelsPage() {
   function expandedContent(c: Channel) {
     const state = syncState[c.id]
     return (
-      <div className="stack" style={{ gap: 12, padding: "4px 0" }}>
+      // 表格有右侧固定列时，Semi 把展开行的外层设成横向 flex，不撑满就只有内容那么宽
+      <div className="stack" style={{ gap: 12, padding: "4px 0", flex: 1 }}>
         {state ? <SyncProgress state={state} /> : null}
         {c.last_error ? (
           <Banner fullMode={false} type="danger" closeIcon={null} title="最近一次报错" description={<span className="pre-wrap">{c.last_error}</span>} />

@@ -217,6 +217,9 @@ function localDateTimeToISO(value: string): string | undefined {
   return d.toISOString()
 }
 
+/** “密钥”列平时的宽度，够放打码后的密钥。 */
+const KEY_COL_WIDTH = 200
+
 function maskKey(key: string) {
   if (!key) return "—"
   if (key.length <= 12) return key
@@ -610,6 +613,10 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
   const targetLocked = mode === "create" && actionType === "create" && targetGroup != null
   const title = isMigrate ? "迁移密钥" : mode === "create" ? "新建密钥" : mode === "edit" ? "编辑密钥" : "密钥管理"
 
+  // 点开完整密钥后“密钥”列按这一页最长的那把放宽，尽量一行显示（Sub2API 的密钥 67 个字符）
+  const revealedLen = isMigrate ? 0 : Math.max(0, ...items.map((k) => revealedKeys[k.id]?.length ?? 0))
+  const keyColWidth = revealedLen ? Math.min(Math.max(KEY_COL_WIDTH, Math.ceil(revealedLen * 7.3) + 56), 560) : KEY_COL_WIDTH
+
   const columns: ColumnProps<ChannelAPIKey>[] = []
   if (isMigrate) {
     columns.push({
@@ -634,7 +641,7 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
     {
       title: "密钥",
       key: "key",
-      width: 200,
+      width: keyColWidth,
       render: (_: unknown, item: ChannelAPIKey) => {
         if (isMigrate) return <span className="mono" style={{ fontSize: 12 }}>{maskKey(item.key)}</span>
         const full = revealedKeys[item.id]
@@ -792,7 +799,8 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
           ) : null}
         </div>
       }
-      width={isMobile ? "100%" : 1000}
+      // 宽屏上放宽，但不铺满：太宽的表格反而难对齐着看
+      width={isMobile ? "100%" : "min(1400px, 90vw)"}
       // 可能从“全部分组”弹窗里打开，要盖在弹窗上面
       zIndex={1010}
       footer={footer}
@@ -905,7 +913,7 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
               columns={columns}
               dataSource={items}
               loading={loading}
-              scroll={{ x: 900 }}
+              scroll={{ x: 900 + keyColWidth - KEY_COL_WIDTH }}
               empty="暂无密钥"
               onRow={(item?: ChannelAPIKey) => {
                 if (!isMigrate || !item || !channel) return {}
