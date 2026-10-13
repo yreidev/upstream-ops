@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -69,20 +70,59 @@ func Ask(ctx context.Context, client *http.Client, baseURL, apiKey, installation
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return Answer{}, time.Since(start), &StatusError{Code: resp.StatusCode, Body: truncate(strings.TrimSpace(string(snippet)), 500)}
+		return Answer{}, time.Since(start), statusError(resp)
 	}
 	out, err := ReadStream(io.LimitReader(resp.Body, maxStreamBytes))
 	return out, time.Since(start), err
 }
 
-// StatusError 是中转站返回的非 2xx 响应。
+// StatusError 是中转站返回的非 2xx 响应；RetryAfter 是响应头 Retry-After 要求等的时间，没给时为 0。
 type StatusError struct {
-	Code int
-	Body string
+	Code       int
+	Body       string
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string { return fmt.Sprintf("中转站返回 %d：%s", e.Code, e.Body) }
+
+func statusError(resp *http.Response) *StatusError {
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return &StatusError{
+		Code:       resp.StatusCode,
+		Body:       truncate(strings.TrimSpace(string(snippet)), 500),
+		RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now()),
+	}
+}
+
+// retryAfter 解析 Retry-After：秒数或 HTTP 日期，解析不了时返回 0。
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return max(time.Duration(n)*time.Second, 0)
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(t.Sub(now), 0)
+	}
+	return 0
+}
+
+// RateLimited 判断这次请求是不是被中转站限流（429），过一会儿再发就行；额度用完的 429 不算，等了也没用。
+func RateLimited(err error) (wait time.Duration, ok bool) {
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != http.StatusTooManyRequests {
+		return 0, false
+	}
+	body := strings.ToLower(se.Body)
+	for _, s := range []string{"insufficient_quota", "exceeded your current quota", "额度不足", "余额不足"} {
+		if strings.Contains(body, s) {
+			return 0, false
+		}
+	}
+	return se.RetryAfter, true
+}
 
 // ModelUnavailable 判断这次请求失败是不是因为分组里没有这个模型，这时可以换下一个备选模型。
 // NewAPI 返回 503、错误码 model_not_found（“当前分组 … 下对于模型 … 无可用渠道”）；其他站点按常见写法认。
@@ -145,8 +185,7 @@ func ListModels(ctx context.Context, client *http.Client, baseURL, apiKey string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, &StatusError{Code: resp.StatusCode, Body: truncate(strings.TrimSpace(string(snippet)), 500)}
+		return nil, statusError(resp)
 	}
 	var out struct {
 		Data []struct {

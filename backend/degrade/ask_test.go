@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHasStandalone21(t *testing.T) {
@@ -176,6 +177,56 @@ func TestModelUnavailable(t *testing.T) {
 	for _, tc := range cases {
 		if got := ModelUnavailable(tc.err); got != tc.want {
 			t.Errorf("ModelUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestAskReportsRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		http.Error(w, `{"error":{"message":"user requests-per-minute limit exceeded","type":"rate_limit_exceeded"}}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	_, _, err := Ask(context.Background(), srv.Client(), srv.URL, "sk-test", "x", "gpt-test", "low", CandyPrompt)
+	if wait, ok := RateLimited(err); !ok || wait != 7*time.Second {
+		t.Fatalf("RateLimited(%v) = %v, %v", err, wait, ok)
+	}
+}
+
+func TestRateLimited(t *testing.T) {
+	cases := []struct {
+		err  error
+		ok   bool
+		wait time.Duration
+	}{
+		{&StatusError{Code: 429, Body: `{"error":{"message":"user requests-per-minute limit exceeded","type":"rate_limit_exceeded"}}`}, true, 0},
+		{&StatusError{Code: 429, Body: `{"error":{"message":"您已达到请求数限制：1分钟内最多请求2次"}}`, RetryAfter: 30 * time.Second}, true, 30 * time.Second},
+		{&StatusError{Code: 429, Body: `{"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}`}, false, 0},
+		{&StatusError{Code: 503, Body: `{"error":{"message":"上游负载已饱和，请稍后再试"}}`}, false, 0},
+		{errors.New("请求中转站：context deadline exceeded"), false, 0},
+		{nil, false, 0},
+	}
+	for _, tc := range cases {
+		if wait, ok := RateLimited(tc.err); ok != tc.ok || wait != tc.wait {
+			t.Errorf("RateLimited(%v) = %v, %v, want %v, %v", tc.err, wait, ok, tc.wait, tc.ok)
+		}
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 13, 14, 15, 48, 0, time.UTC)
+	cases := map[string]time.Duration{
+		"":                              0,
+		"60":                            time.Minute,
+		" 5 ":                           5 * time.Second,
+		"-3":                            0,
+		"Tue, 13 Oct 2026 14:16:18 GMT": 30 * time.Second,
+		"Tue, 13 Oct 2026 14:00:00 GMT": 0,
+		"soon":                          0,
+	}
+	for v, want := range cases {
+		if got := retryAfter(v, now); got != want {
+			t.Errorf("retryAfter(%q) = %v, want %v", v, got, want)
 		}
 	}
 }

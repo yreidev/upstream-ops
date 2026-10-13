@@ -28,6 +28,12 @@ const (
 	askTimeout = 10 * time.Minute
 	// recoveryWait 降智的密钥首测答对后，隔多久再复测，和插件巡检脚本一样。
 	recoveryWait = 240 * time.Second
+	// rateLimitWait 被中转站限流（429）又没给 Retry-After 时等多久再重发；限的多是每分钟请求数，等一分钟。
+	rateLimitWait = time.Minute
+	// maxRateLimitWait Retry-After 要等得再久也只等这么久。
+	maxRateLimitWait = 2 * time.Minute
+	// rateLimitRetries 一次提问被限流后最多重发几次。
+	rateLimitRetries = 3
 	// checkAllConcurrency 全部检测时同时测几把密钥。
 	checkAllConcurrency = 3
 	// listModelsTimeout 每轮检测前查分组能用的模型最长等多久。
@@ -75,10 +81,12 @@ type Service struct {
 	cipher   *crypto.Cipher
 	log      *slog.Logger
 
-	// Ask 发一次糖果题；FetchModels 查分组能用的模型；RecoveryWait 是恢复确认前的等待。测试里替换。
-	Ask          AskFunc
-	FetchModels  FetchModelsFunc
-	RecoveryWait time.Duration
+	// Ask 发一次糖果题；FetchModels 查分组能用的模型；RecoveryWait 是恢复确认前的等待；
+	// RateLimitWait 是被限流又没给 Retry-After 时的等待。测试里替换。
+	Ask           AskFunc
+	FetchModels   FetchModelsFunc
+	RecoveryWait  time.Duration
+	RateLimitWait time.Duration
 
 	mu       sync.Mutex
 	defaults config.DegradeConfig
@@ -100,9 +108,10 @@ func NewService(repo *storage.DegradeKeys, channels *storage.Channels, keys KeyS
 		FetchModels: func(ctx context.Context, baseURL, apiKey string) ([]string, error) {
 			return ListModels(ctx, client, baseURL, apiKey)
 		},
-		RecoveryWait: recoveryWait,
-		defaults:     config.DegradeConfig{}.WithDefaults(),
-		busy:         map[uint]bool{},
+		RecoveryWait:  recoveryWait,
+		RateLimitWait: rateLimitWait,
+		defaults:      config.DegradeConfig{}.WithDefaults(),
+		busy:          map[uint]bool{},
 	}
 }
 
@@ -436,8 +445,8 @@ func CheckJobSpec(k *storage.DegradeKey, channelName string) jobs.Spec {
 		ChannelID: k.ChannelID,
 		Title:     "降智检测：" + keyLabel(channelName, k),
 		Key:       fmt.Sprintf("%s:%d", storage.JobDegradeCheck, k.ID),
-		// 最坏是三次都等满 10 分钟，再加恢复确认前的 4 分钟
-		Timeout: 3*askTimeout + recoveryWait + time.Minute,
+		// 最坏是三次都等满 10 分钟，再加恢复确认前的 4 分钟和每次被限流时的等待
+		Timeout: 3*askTimeout + recoveryWait + 3*rateLimitRetries*maxRateLimitWait + time.Minute,
 	}
 }
 
@@ -598,9 +607,7 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 			label = fmt.Sprintf("复测第 %d 次", attempt-1)
 		}
 		progress.Start(ctx, progress.StageDegrade, fmt.Sprintf("%s：%s · %s", label, model, effortText(effort)))
-		actx, cancel := context.WithTimeout(ctx, askTimeout)
-		answer, elapsed, askErr := s.Ask(actx, c.SiteURL, apiKey, installation, model, askEffort(effort))
-		cancel()
+		answer, elapsed, askErr := s.askPatiently(ctx, label, c.SiteURL, apiKey, installation, model, effort)
 		if askErr != nil && ctx.Err() != nil {
 			return "", ctx.Err() // 任务被取消（服务停止或超时），这次不记
 		}
@@ -684,6 +691,29 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 	}
 	s.finish(ctx, k, c, round, first)
 	return round, nil
+}
+
+// askPatiently 发一次糖果题。被中转站限流时等一会儿重发，最多重发 rateLimitRetries 次；
+// 被限流的那几次不算检测结果，还被限流就返回最后一次的错误。
+func (s *Service) askPatiently(ctx context.Context, label, baseURL, apiKey, installation, model, effort string) (Answer, time.Duration, error) {
+	for retry := 1; ; retry++ {
+		actx, cancel := context.WithTimeout(ctx, askTimeout)
+		answer, elapsed, err := s.Ask(actx, baseURL, apiKey, installation, model, askEffort(effort))
+		cancel()
+		wait, limited := RateLimited(err)
+		if !limited || retry > rateLimitRetries || ctx.Err() != nil {
+			return answer, elapsed, err
+		}
+		if wait <= 0 {
+			wait = s.RateLimitWait
+		}
+		wait = min(wait, maxRateLimitWait)
+		progress.Start(ctx, progress.StageDegrade, fmt.Sprintf("%s被中转站限流，等 %d 秒后重发（第 %d 次重发，最多 %d 次）",
+			label, int(wait.Round(time.Second)/time.Second), retry, rateLimitRetries))
+		if err := sleep(ctx, wait); err != nil {
+			return Answer{}, 0, err
+		}
+	}
 }
 
 // decide 看三次结果是否一致，一致就确认状态，写好这轮的说明。

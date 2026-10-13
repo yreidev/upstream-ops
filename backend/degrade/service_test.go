@@ -52,7 +52,8 @@ func (f *fakeNotifier) Dispatch(_ context.Context, msg notify.Message) error {
 	return nil
 }
 
-// script 按顺序给出每次提问的结果："ok" 答对、"bad" 答错、"err" 请求失败、"none" 分组里没有这个模型。
+// script 按顺序给出每次提问的结果："ok" 答对、"bad" 答错、"err" 请求失败、"none" 分组里没有这个模型、
+// "limit" 被中转站限流。
 type script struct {
 	mu      sync.Mutex
 	answers []string
@@ -77,6 +78,8 @@ func (s *script) ask(_ context.Context, _, apiKey, _, model, effort string) (Ans
 		return Answer{Text: "最少要取 29 个。"}, time.Second, nil
 	case "none":
 		return Answer{}, 0, &StatusError{Code: 503, Body: `{"error":{"code":"model_not_found","message":"当前分组 default 下对于模型 ` + model + ` 无可用渠道"}}`}
+	case "limit":
+		return Answer{}, 0, &StatusError{Code: 429, Body: `{"error":{"message":"user requests-per-minute limit exceeded","type":"rate_limit_exceeded"}}`}
 	default:
 		return Answer{}, 0, &StatusError{Code: 503, Body: "上游负载已饱和"}
 	}
@@ -132,6 +135,7 @@ func newEnv(t *testing.T) *env {
 		return e.available, nil
 	}
 	e.svc.RecoveryWait = 0
+	e.svc.RateLimitWait = 0
 	return e
 }
 
@@ -240,6 +244,47 @@ func TestRecoveryWaitsBeforeRetest(t *testing.T) {
 	got, _ := e.repo.Get(k.ID)
 	if got.State != storage.DegradeDegraded {
 		t.Fatalf("state = %s", got.State)
+	}
+}
+
+func TestRateLimitedAskIsResent(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeUnknown)
+	round, err := e.run(t, k.ID, "ok", "limit", "limit", "ok", "ok")
+	if err != nil || round.State != storage.DegradeNormal || len(round.Results) != 3 || len(e.script.calls) != 5 {
+		t.Fatalf("round = %+v, err = %v, calls = %v", round, err, e.script.calls)
+	}
+	// 被限流的那几次不算检测结果
+	if checks, _ := e.repo.ListChecks(k.ID, 10); len(checks) != 3 {
+		t.Fatalf("checks = %d, want 3", len(checks))
+	}
+
+	// 重发 3 次还被限流：这轮记为请求失败，状态不变
+	e2 := newEnv(t)
+	k2 := e2.addKey(t, storage.DegradeNormal)
+	round, err = e2.run(t, k2.ID, "bad", "limit", "limit", "limit", "limit")
+	if err == nil || round.State != storage.DegradeNormal || len(e2.script.calls) != 5 ||
+		!strings.HasPrefix(round.Message, "复测请求失败，状态不变：中转站返回 429") {
+		t.Fatalf("round = %+v, err = %v, calls = %v", round, err, e2.script.calls)
+	}
+	if checks, _ := e2.repo.ListChecks(k2.ID, 10); len(checks) != 2 {
+		t.Fatalf("checks = %d, want 2", len(checks))
+	}
+}
+
+func TestRateLimitWaitIsCutByJobTimeout(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeNormal)
+	e.svc.RateLimitWait = time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	e.script.answers = []string{"limit", "ok"}
+	_, _, err := e.svc.CheckOne(k.ID)(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || len(e.script.calls) != 1 {
+		t.Fatalf("err = %v, calls = %v", err, e.script.calls)
+	}
+	if checks, _ := e.repo.ListChecks(k.ID, 10); len(checks) != 0 {
+		t.Fatalf("checks = %d, want 0", len(checks))
 	}
 }
 
