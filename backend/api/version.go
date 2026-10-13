@@ -3,9 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,13 +16,13 @@ import (
 )
 
 const (
-	githubRepoURL              = "https://github.com/yreidev/upstream-ops"
-	defaultGitHubLatestRelease = "https://api.github.com/repos/yreidev/upstream-ops/releases/latest"
+	githubRepoURL            = "https://github.com/yreidev/upstream-ops"
+	defaultGitHubReleaseList = "https://api.github.com/repos/yreidev/upstream-ops/releases?per_page=30"
 )
 
 var (
-	githubLatestReleaseURL = defaultGitHubLatestRelease
-	githubReleaseClient    = &http.Client{Timeout: 2 * time.Second}
+	githubReleasesURL   = defaultGitHubReleaseList
+	githubReleaseClient = &http.Client{Timeout: 2 * time.Second}
 )
 
 type versionResponse struct {
@@ -34,11 +34,24 @@ type versionResponse struct {
 	RepoURL         string `json:"repo_url"`
 	ReleaseURL      string `json:"release_url"`
 	UpdateError     string `json:"update_error"`
+	// ReleaseNotes 是比当前版本新的各个正式发布的说明，新版本在前；没有更新时为空。
+	ReleaseNotes []releaseNote `json:"release_notes,omitempty"`
+}
+
+type releaseNote struct {
+	Version     string `json:"version"`
+	URL         string `json:"url"`
+	PublishedAt string `json:"published_at"`
+	Notes       string `json:"notes"`
 }
 
 type githubReleaseResponse struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
+	TagName     string `json:"tag_name"`
+	HTMLURL     string `json:"html_url"`
+	Body        string `json:"body"`
+	PublishedAt string `json:"published_at"`
+	Draft       bool   `json:"draft"`
+	Prerelease  bool   `json:"prerelease"`
 }
 
 func registerVersion(api *gin.RouterGroup, d *Deps) {
@@ -62,49 +75,106 @@ func buildVersionResponse(ctx context.Context, d *Deps) versionResponse {
 		RepoURL: githubRepoURL,
 	}
 
-	latest, releaseURL, err := fetchLatestGitHubRelease(ctx, githubReleaseClient)
+	releases, err := fetchGitHubReleases(ctx, githubReleaseClient)
 	if err != nil {
 		resp.UpdateError = err.Error()
 		return resp
 	}
-	resp.LatestVersion = latest
-	resp.ReleaseURL = releaseURL
-	resp.UpdateAvailable = isVersionNewer(latest, global.VERSION)
+	latest, ok := latestGitHubRelease(releases)
+	if !ok {
+		resp.UpdateError = "github has no published release"
+		return resp
+	}
+	resp.LatestVersion = latest.TagName
+	resp.ReleaseURL = latest.HTMLURL
+	resp.UpdateAvailable = isVersionNewer(latest.TagName, global.VERSION)
+	if resp.UpdateAvailable {
+		resp.ReleaseNotes = newerReleaseNotes(releases, global.VERSION)
+	}
 	return resp
 }
 
-func fetchLatestGitHubRelease(ctx context.Context, client *http.Client) (string, string, error) {
+// fetchGitHubReleases 读取最近的发布列表（不含草稿，未登录时 GitHub 不返回草稿）。
+// 只请求一次，最新版本和更新说明都从这份列表里取。
+func fetchGitHubReleases(ctx context.Context, client *http.Client) ([]githubReleaseResponse, error) {
 	if client == nil {
 		client = githubReleaseClient
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubLatestReleaseURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubReleasesURL, nil)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "upstream-ops")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("github latest release status %d", resp.StatusCode)
+		return nil, fmt.Errorf("github releases status %d", resp.StatusCode)
 	}
 
-	var release githubReleaseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", "", err
+	var releases []githubReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, err
 	}
-	if strings.TrimSpace(release.TagName) == "" {
-		return "", "", errors.New("github latest release missing tag_name")
+	return releases, nil
+}
+
+// publishedReleases 只留正式发布：去掉草稿、预发布和版本号解析不了的。
+func publishedReleases(releases []githubReleaseResponse) []githubReleaseResponse {
+	out := make([]githubReleaseResponse, 0, len(releases))
+	for _, r := range releases {
+		if r.Draft || r.Prerelease {
+			continue
+		}
+		if _, ok := parseVersion(r.TagName); !ok {
+			continue
+		}
+		if strings.TrimSpace(r.HTMLURL) == "" {
+			r.HTMLURL = githubRepoURL
+		}
+		out = append(out, r)
 	}
-	if strings.TrimSpace(release.HTMLURL) == "" {
-		release.HTMLURL = githubRepoURL
+	return out
+}
+
+// latestGitHubRelease 按版本号取最大的正式发布，不依赖 GitHub 列表的排序。
+func latestGitHubRelease(releases []githubReleaseResponse) (githubReleaseResponse, bool) {
+	var latest githubReleaseResponse
+	found := false
+	for _, r := range publishedReleases(releases) {
+		if !found || isVersionNewer(r.TagName, latest.TagName) {
+			latest = r
+			found = true
+		}
 	}
-	return release.TagName, release.HTMLURL, nil
+	return latest, found
+}
+
+func newerReleaseNotes(releases []githubReleaseResponse, current string) []releaseNote {
+	newer := make([]githubReleaseResponse, 0)
+	for _, r := range publishedReleases(releases) {
+		if isVersionNewer(r.TagName, current) {
+			newer = append(newer, r)
+		}
+	}
+	sort.SliceStable(newer, func(i, j int) bool {
+		return isVersionNewer(newer[i].TagName, newer[j].TagName)
+	})
+	notes := make([]releaseNote, 0, len(newer))
+	for _, r := range newer {
+		notes = append(notes, releaseNote{
+			Version:     r.TagName,
+			URL:         r.HTMLURL,
+			PublishedAt: r.PublishedAt,
+			Notes:       strings.TrimSpace(r.Body),
+		})
+	}
+	return notes
 }
 
 func isVersionNewer(latest, current string) bool {

@@ -38,6 +38,7 @@ func registerChannels(g *gin.RouterGroup, d *Deps) {
 	gp.GET("/:id/api-keys/groups", func(c *gin.Context) { listChannelAPIKeyGroups(c, d) })
 	gp.GET("/:id/api-keys", func(c *gin.Context) { listChannelAPIKeys(c, d) })
 	gp.POST("/:id/api-keys", func(c *gin.Context) { createChannelAPIKey(c, d) })
+	gp.POST("/:id/api-keys/rename-to-group", func(c *gin.Context) { renameChannelAPIKeysToGroup(c, d) })
 	gp.PUT("/:id/api-keys/:key_id", func(c *gin.Context) { updateChannelAPIKey(c, d) })
 	gp.DELETE("/:id/api-keys/:key_id", func(c *gin.Context) { deleteChannelAPIKey(c, d) })
 	gp.POST("/:id/api-keys/:key_id/reveal", func(c *gin.Context) { revealChannelAPIKey(c, d) })
@@ -584,6 +585,21 @@ func updateChannelAPIKey(c *gin.Context, d *Deps) {
 		return
 	}
 	res, err := d.ChannelSvc.UpdateAPIKey(c.Request.Context(), id, keyID, connector.APIKeyUpdateRequest(in))
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// renameChannelAPIKeysToGroup 把渠道全部密钥的名称改成各自所属的分组名。
+func renameChannelAPIKeysToGroup(c *gin.Context, d *Deps) {
+	id, err := uintParam(c, "id")
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	res, err := d.ChannelSvc.RenameAPIKeysToGroup(c.Request.Context(), id)
 	if err != nil {
 		fail(c, http.StatusBadRequest, err)
 		return

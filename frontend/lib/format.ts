@@ -44,6 +44,17 @@ export function dateTime(iso?: string | null): string {
   })
 }
 
+/** 本地日期，如 2026/07/14 */
+export function fullDate(iso?: string | null): string {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "—"
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}/${m}/${day}`
+}
+
 /** 完整本地时间，如 2026/07/14 01:47:18 */
 export function fullDateTime(iso?: string | null): string {
   if (!iso) return "—"

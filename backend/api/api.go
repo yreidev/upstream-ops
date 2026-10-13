@@ -44,6 +44,8 @@ type channelService interface {
 	UpdateAPIKey(ctx context.Context, channelID uint, keyID int64, req connector.APIKeyUpdateRequest) (*connector.APIKey, error)
 	DeleteAPIKey(ctx context.Context, channelID uint, keyID int64) error
 	RevealAPIKey(ctx context.Context, channelID uint, keyID int64) (string, error)
+	// RenameAPIKeysToGroup 把渠道全部密钥的名称改成各自所属的分组名。
+	RenameAPIKeysToGroup(ctx context.Context, channelID uint) (*channel.RenameAPIKeysResult, error)
 }
 
 // Deps 把所有 handler 需要的依赖打包传入。

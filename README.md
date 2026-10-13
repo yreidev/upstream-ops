@@ -153,6 +153,7 @@ UpstreamOps 主要解决这些痛点：
 - 获取并复制完整 Key。
 - 在“分组”总览中可直接为指定分组新建 API Key，或从当前渠道选择一个现有 API Key 迁移到该分组。
 - 迁移前会重新校验目标分组并显示原分组到目标分组的二次确认；已在目标分组的 Key 仅展示、不可重复选择。
+- “名称改为分组名”一键把当前渠道全部 Key 的名称改成各自所属的分组名；已经同名、未分组、分组不在上游现有分组里的跳过，NewAPI 名称超过 50 字节的也跳过，完成后列出跳过和失败的 Key。
 
 不同上游支持的字段存在差异，前端会按 NewAPI / Sub2API 的接口能力展示对应表单。
 
@@ -184,7 +185,7 @@ UpstreamOps 主要解决这些痛点：
 - 倍率变化最小推送百分比。
 - 余额低告警冷却时间。
 - 通知最大重试次数。
-- 版本检查结果通过页面通知提示。
+- 检测更新：发现新版本时弹窗显示当前版本之后各版本的更新日志（取自 GitHub Releases）。
 - 上游请求超时时间和 `User-Agent`。
 - 通知渠道。
 - 验证码服务。
@@ -250,7 +251,7 @@ IMAGE_TAG=latest
 生产环境建议锁定具体版本，例如：
 
 ```env
-IMAGE_TAG=v0.2.0
+IMAGE_TAG=v0.3.0
 ```
 
 ## 环境变量
@@ -333,6 +334,14 @@ pnpm lint
 pnpm exec tsc --noEmit --incremental false
 pnpm build
 ```
+
+### 发版
+
+1. 在 [docs/CHANGELOG.md](docs/CHANGELOG.md) 把“未发布”标题改成 `## vX.Y.Z（YYYY-MM-DD）`，同时修改 `backend/global/version.go` 的版本号和上文 `IMAGE_TAG` 示例。
+2. 提交后打 tag 并推送：`git tag vX.Y.Z && git push origin main vX.Y.Z`。
+3. 发布工作流先跑测试并确认更新日志里有这个版本，再构建、推送镜像，最后用这段更新日志创建 GitHub Release，末尾附镜像地址和 digest。
+
+推送 main 只跑测试，不构建镜像。
 
 ## 上游 HTTP 配置
 
@@ -629,6 +638,8 @@ API Key 管理依赖上游自身接口，不同上游字段存在差异。
 - Reveal 完整 Key 并复制。
 
 NewAPI 场景下会适配 NewAPI 的 token 接口。Sub2API 场景下会适配 Sub2API 的 keys 接口与 group 接口。
+
+NewAPI 的修改接口会把请求里没带的字段清零，所以修改 Key（包括迁移分组、一键改名）时会先读出这个 Key 的全部字段，改动后整条写回；启用、停用状态另发一次只改状态的请求。
 
 ## 充值与兑换说明
 

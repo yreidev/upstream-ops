@@ -286,6 +286,15 @@ export interface AppVersion {
   repo_url?: string
   release_url?: string
   update_error?: string
+  /** 比当前版本新的各个正式发布的更新日志，新版本在前；没有更新时不返回。 */
+  release_notes?: AppReleaseNote[]
+}
+
+export interface AppReleaseNote {
+  version: string
+  url: string
+  published_at: string
+  notes: string
 }
 
 export interface ApplyConfigResult {
@@ -399,4 +408,18 @@ export interface ChannelAPIKeyGroup {
 
 export interface ChannelAPIKeyReveal {
   key: string
+}
+
+/** POST /channels/:id/api-keys/rename-to-group 的返回（backend/channel/api_key_rename.go） */
+export interface ChannelAPIKeyRenameIssue {
+  id: number
+  name: string
+  reason: string
+}
+
+export interface ChannelAPIKeyRenameResult {
+  renamed: number
+  unchanged: number
+  skipped: ChannelAPIKeyRenameIssue[]
+  failed: ChannelAPIKeyRenameIssue[]
 }

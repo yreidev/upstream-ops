@@ -1291,30 +1291,41 @@ func (s *Service) ListAPIKeyGroupSet(ctx context.Context, channelID uint) (*APIK
 	}
 	isSub2API := c.Type == storage.ChannelTypeSub2API
 
-	const pageSize = 100
-	for page := 1; page <= maxAPIKeyListPages; page++ {
-		p, err := conn.ListAPIKeys(ctx, resolved, session, connector.APIKeyQuery{Page: page, PageSize: pageSize})
-		if err != nil {
-			return nil, err
-		}
-		for _, k := range p.Items {
-			if isSub2API {
-				if k.GroupID != nil && *k.GroupID > 0 {
-					set.IDs[*k.GroupID] = struct{}{}
-				}
-				continue
+	keys, err := listAllAPIKeys(ctx, conn, resolved, session)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range keys {
+		if isSub2API {
+			if k.GroupID != nil && *k.GroupID > 0 {
+				set.IDs[*k.GroupID] = struct{}{}
 			}
-			if name := strings.TrimSpace(k.Group); name != "" {
-				set.Names[name] = struct{}{}
-			}
+			continue
 		}
-		if p.Pages <= 0 || page >= p.Pages {
-			break
+		if name := strings.TrimSpace(k.Group); name != "" {
+			set.Names[name] = struct{}{}
 		}
 	}
 	_ = s.Channels.SetLastError(c.ID, "")
 	s.storeAPIKeyGroupSetCache(channelID, set)
 	return set, nil
+}
+
+// listAllAPIKeys 分页拉取渠道的全部密钥，页数上限 maxAPIKeyListPages。
+func listAllAPIKeys(ctx context.Context, conn connector.Connector, resolved *connector.Channel, session *connector.AuthSession) ([]connector.APIKey, error) {
+	const pageSize = 100
+	var keys []connector.APIKey
+	for page := 1; page <= maxAPIKeyListPages; page++ {
+		p, err := conn.ListAPIKeys(ctx, resolved, session, connector.APIKeyQuery{Page: page, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, p.Items...)
+		if p.Pages <= 0 || page >= p.Pages {
+			break
+		}
+	}
+	return keys, nil
 }
 
 // loadAPIKeyGroupSetCache 读缓存；过期或未命中返回 (nil, false)。

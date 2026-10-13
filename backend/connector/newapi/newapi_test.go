@@ -731,10 +731,18 @@ func TestCreateUpdateDeleteRevealAPIKey(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode update: %v", err)
 			}
-			if body["id"] != float64(9) || body["status"] != float64(2) {
-				t.Fatalf("update body = %#v", body)
+			// 先整条写回（状态保持原值），再用 status_only 单独改状态。
+			if r.URL.Query().Get("status_only") == "" {
+				if body["id"] != float64(9) || body["status"] != float64(1) || body["expired_time"] != float64(-1) {
+					t.Fatalf("update body = %#v", body)
+				}
+				_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":9,"status":1,"name":"main"}}`))
+				return
 			}
-			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":9,"status":2,"name":"main disabled"}}`))
+			if body["id"] != float64(9) || body["status"] != float64(2) || len(body) != 2 {
+				t.Fatalf("status update body = %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":9,"status":2,"name":"main"}}`))
 		default:
 			t.Fatalf("unexpected method %s", r.Method)
 		}
@@ -749,10 +757,14 @@ func TestCreateUpdateDeleteRevealAPIKey(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"items":[{"id":9,"status":1,"name":"main","expired_time":-1,"group":"default"}],"total":1,"page":1,"page_size":20,"pages":1}}`))
 	})
 	mux.HandleFunc("/api/token/9", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Fatalf("method = %s, want DELETE", r.Method)
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":9,"status":1,"name":"main","expired_time":-1,"remain_quota":500,"unlimited_quota":false,"group":"default"}}`))
+		case http.MethodDelete:
+			_, _ = w.Write([]byte(`{"success":true,"message":""}`))
+		default:
+			t.Fatalf("method = %s, want GET or DELETE", r.Method)
 		}
-		_, _ = w.Write([]byte(`{"success":true,"message":""}`))
 	})
 	mux.HandleFunc("/api/token/9/key", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -796,14 +808,69 @@ func TestCreateUpdateDeleteRevealAPIKey(t *testing.T) {
 	}
 }
 
-func TestBuildNewAPIUpdateTokenGroupOnly(t *testing.T) {
-	group := "pro"
-	body := buildNewAPIUpdateToken(9, connector.APIKeyUpdateRequest{Group: &group})
-	if body["id"] != 9 || body["group"] != group {
-		t.Fatalf("group update body = %#v", body)
+// NewAPI 的 PUT /api/token/ 整条覆盖，只改分组时其它字段必须原样带上，否则会被清零。
+func TestBuildNewAPIUpdateTokenKeepsCurrentFields(t *testing.T) {
+	ips := "1.2.3.4"
+	current := newAPIToken{
+		ID: 9, Name: "main", Status: 2, ExpiredTime: 1900000000, RemainQuota: 500,
+		ModelLimitsEnabled: true, ModelLimits: "gpt-5", AllowIPs: &ips, Group: "default",
 	}
-	if len(body) != 2 {
-		t.Fatalf("group update contains unrelated fields: %#v", body)
+	group := "pro"
+	status := "active"
+	body := buildNewAPIUpdateToken(current, connector.APIKeyUpdateRequest{Group: &group, Status: &status})
+	want := map[string]any{
+		"id": 9, "name": "main", "status": 2, "expired_time": int64(1900000000), "remain_quota": 500,
+		"unlimited_quota": false, "model_limits_enabled": true, "model_limits": "gpt-5",
+		"allow_ips": "1.2.3.4", "group": "pro", "cross_group_retry": false,
+	}
+	if len(body) != len(want) {
+		t.Fatalf("body = %#v", body)
+	}
+	for k, v := range want {
+		if body[k] != v {
+			t.Fatalf("body[%q] = %#v, want %#v", k, body[k], v)
+		}
+	}
+}
+
+func TestUpdateAPIKeyNameOnlyKeepsOtherFields(t *testing.T) {
+	var puts []map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/token/12", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("New-Api-User") != "7" {
+			t.Fatalf("get token: method=%s user=%q", r.Method, r.Header.Get("New-Api-User"))
+		}
+		_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":12,"status":1,"name":"old","key":"abc**xyz","expired_time":1900000000,"remain_quota":250000,"unlimited_quota":false,"model_limits_enabled":false,"model_limits":"","allow_ips":null,"group":"claude-max","cross_group_retry":false,"auto_groups":null}}`))
+	})
+	mux.HandleFunc("/api/token/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", r.Method)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		puts = append(puts, body)
+		_, _ = w.Write([]byte(`{"success":true,"message":""}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	name := "claude-max"
+	unchanged := "active"
+	got, err := New().UpdateAPIKey(context.Background(), &connector.Channel{SiteURL: srv.URL}, &connector.AuthSession{Cookie: "session=1", UserID: "7"}, 12,
+		connector.APIKeyUpdateRequest{Name: &name, Status: &unchanged})
+	if err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+	if len(puts) != 1 {
+		t.Fatalf("want one PUT (status unchanged), got %d: %#v", len(puts), puts)
+	}
+	body := puts[0]
+	if body["name"] != "claude-max" || body["expired_time"] != float64(1900000000) || body["remain_quota"] != float64(250000) ||
+		body["group"] != "claude-max" || body["status"] != float64(1) || body["allow_ips"] != nil {
+		t.Fatalf("PUT body = %#v", body)
+	}
+	if got.ID != 12 || got.Name != "claude-max" || got.Group != "claude-max" {
+		t.Fatalf("returned key = %+v", got)
 	}
 }
 

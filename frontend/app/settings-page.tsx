@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { CaptchaFormDialog } from "@/components/monitor/captcha-form-dialog";
 import { NotificationFormDialog } from "@/components/monitor/notification-form-dialog";
+import { UpdateNotesDialog } from "@/components/monitor/update-notes-dialog";
 import { apiFetch } from "@/lib/api";
 import { useTriggerRefresh } from "@/lib/refresh-context";
 import type {
@@ -73,6 +74,7 @@ export default function SettingsPage() {
   const [busyCaptchaID, setBusyCaptchaID] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState("system");
   const [versionInfo, setVersionInfo] = useState<AppVersion | null>(null);
+  const [updateNotesOpen, setUpdateNotesOpen] = useState(false);
 
   useEffect(() => {
     if (query.data?.config) {
@@ -232,7 +234,7 @@ export default function SettingsPage() {
       if (result.update_error) {
         toast.error(result.update_error);
       } else if (result.update_available && result.latest_version) {
-        toast.warning(`发现新版本 ${result.latest_version}`);
+        setUpdateNotesOpen(true);
       } else {
         toast.success("当前已是最新版本");
       }
@@ -289,19 +291,27 @@ export default function SettingsPage() {
                     当前版本 {versionInfo?.version || "加载中"}
                   </Badge>
                   {versionInfo?.latest_version ? (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "border-transparent",
-                        versionInfo.update_available
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-emerald-50 text-emerald-700",
-                      )}
-                    >
-                      {versionInfo.update_available
-                        ? `可更新 ${versionInfo.latest_version}`
-                        : "已是最新"}
-                    </Badge>
+                    versionInfo.update_available ? (
+                      <button
+                        type="button"
+                        onClick={() => setUpdateNotesOpen(true)}
+                        title="查看更新日志"
+                      >
+                        <Badge
+                          variant="outline"
+                          className="border-transparent bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        >
+                          可更新 {versionInfo.latest_version} · 查看更新日志
+                        </Badge>
+                      </button>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="border-transparent bg-emerald-50 text-emerald-700"
+                      >
+                        已是最新
+                      </Badge>
+                    )
                   ) : null}
                   <Button
                     size="sm"
@@ -1085,6 +1095,11 @@ export default function SettingsPage() {
       />
 
       {confirmDialog}
+      <UpdateNotesDialog
+        open={updateNotesOpen}
+        onOpenChange={setUpdateNotesOpen}
+        version={versionInfo}
+      />
     </section>
   );
 }

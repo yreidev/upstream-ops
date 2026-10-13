@@ -775,42 +775,101 @@ func (c *Client) CreateAPIKey(ctx context.Context, ch *connector.Channel, sessio
 	return nil, errors.New("newapi create api key: missing key id")
 }
 
+// UpdateAPIKey 修改令牌。
+//
+// NewAPI 的 PUT /api/token/ 是整条覆盖：请求里没带的字段会被清零（额度归零、过期时间变 0
+// 即立刻过期、分组清空）。所以先读出原令牌，只把这次要改的字段套上去再整条写回。
+// 状态在普通修改里会被忽略，必须另发 ?status_only=true 才生效；放在最后发，
+// 这样"延长过期时间再启用"这类修改，上游检查能不能启用时看到的已经是新的过期时间。
 func (c *Client) UpdateAPIKey(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, id int64, req connector.APIKeyUpdateRequest) (*connector.APIKey, error) {
 	if id <= 0 {
 		return nil, errors.New("密钥 ID 无效")
 	}
-	body := buildNewAPIUpdateToken(id, req)
-	restyReq := c.http.R().
+	base := strings.TrimRight(ch.SiteURL, "/")
+	current, err := c.getToken(ctx, base, session, id)
+	if err != nil {
+		return nil, err
+	}
+	body := buildNewAPIUpdateToken(*current, req)
+	token, err := c.putToken(ctx, base+"/api/token/", session, body, "newapi update api key")
+	if err != nil {
+		return nil, err
+	}
+	if req.Status != nil {
+		if status := newAPITokenStatusFromString(*req.Status); status != 0 && status != current.Status {
+			statusBody := map[string]any{"id": int(id), "status": status}
+			token, err = c.putToken(ctx, base+"/api/token/?status_only=true", session, statusBody, "newapi update api key status")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	out := token.toConnector()
+	return &out, nil
+}
+
+// getToken 读取单个令牌的当前值（GET /api/token/:id，返回的 key 是打码后的）。
+func (c *Client) getToken(ctx context.Context, base string, session *connector.AuthSession, id int64) (*newAPIToken, error) {
+	req := c.http.R().SetContext(ctx)
+	applyNewAPIAuth(req, session)
+	resp, err := req.Get(base + "/api/token/" + strconv.FormatInt(id, 10))
+	if err != nil {
+		return nil, fmt.Errorf("newapi get api key http: %w", err)
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("newapi get api key: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+	}
+	data, err := decodeNewAPIWriteData(resp.Body(), "newapi get api key")
+	if err != nil {
+		return nil, err
+	}
+	var token newAPIToken
+	if err := json.Unmarshal(data, &token); err != nil {
+		return nil, fmt.Errorf("newapi get api key data: %w", err)
+	}
+	if token.ID != int(id) {
+		return nil, fmt.Errorf("newapi get api key: 上游没有返回密钥 %d", id)
+	}
+	return &token, nil
+}
+
+// putToken 发一次 PUT 修改并解析返回的令牌；上游没回令牌时用请求体里的字段补齐。
+func (c *Client) putToken(ctx context.Context, url string, session *connector.AuthSession, body map[string]any, prefix string) (newAPIToken, error) {
+	req := c.http.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(body)
-	applyNewAPIAuth(restyReq, session)
-	resp, err := restyReq.Put(strings.TrimRight(ch.SiteURL, "/") + "/api/token/")
+	applyNewAPIAuth(req, session)
+	resp, err := req.Put(url)
 	if err != nil {
-		return nil, fmt.Errorf("newapi update api key http: %w", err)
+		return newAPIToken{}, fmt.Errorf("%s http: %w", prefix, err)
 	}
 	if resp.IsError() {
-		return nil, fmt.Errorf("newapi update api key: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		return newAPIToken{}, fmt.Errorf("%s: %w", prefix, connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
 	}
-	data, err := decodeNewAPIWriteData(resp.Body(), "newapi update api key")
+	data, err := decodeNewAPIWriteData(resp.Body(), prefix)
 	if err != nil {
-		return nil, err
+		return newAPIToken{}, err
 	}
 	var token newAPIToken
 	if len(data) > 0 && string(data) != "null" {
 		_ = json.Unmarshal(data, &token)
 	}
 	if token.ID == 0 {
-		token.ID = int(id)
+		if v, ok := body["id"].(int); ok {
+			token.ID = v
+		}
 		if v, ok := body["name"].(string); ok {
 			token.Name = v
 		}
 		if v, ok := body["status"].(int); ok {
 			token.Status = v
 		}
+		if v, ok := body["group"].(string); ok {
+			token.Group = v
+		}
 	}
-	out := token.toConnector()
-	return &out, nil
+	return token, nil
 }
 
 func (c *Client) DeleteAPIKey(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, id int64) error {
@@ -1352,13 +1411,28 @@ func fillNewAPICreatedKeyDefaults(key *connector.APIKey, req connector.APIKeyCre
 	}
 }
 
-func buildNewAPIUpdateToken(id int64, req connector.APIKeyUpdateRequest) map[string]any {
-	body := map[string]any{"id": int(id)}
+// buildNewAPIUpdateToken 以令牌当前值为底，套上这次要改的字段，拼出整条覆盖用的请求体。
+// status 保持当前值：普通修改不会改状态，状态由 UpdateAPIKey 另发 status_only 请求修改。
+func buildNewAPIUpdateToken(current newAPIToken, req connector.APIKeyUpdateRequest) map[string]any {
+	var allowIPs any
+	if current.AllowIPs != nil {
+		allowIPs = *current.AllowIPs
+	}
+	body := map[string]any{
+		"id":                   current.ID,
+		"name":                 current.Name,
+		"status":               current.Status,
+		"expired_time":         current.ExpiredTime,
+		"remain_quota":         current.RemainQuota,
+		"unlimited_quota":      current.UnlimitedQuota,
+		"model_limits_enabled": current.ModelLimitsEnabled,
+		"model_limits":         current.ModelLimits,
+		"allow_ips":            allowIPs,
+		"group":                current.Group,
+		"cross_group_retry":    current.CrossGroupRetry,
+	}
 	if req.Name != nil {
 		body["name"] = strings.TrimSpace(*req.Name)
-	}
-	if req.Status != nil {
-		body["status"] = newAPITokenStatusFromString(*req.Status)
 	}
 	if req.Group != nil {
 		body["group"] = strings.TrimSpace(*req.Group)

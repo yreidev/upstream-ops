@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
-import { ArrowRightLeft, Copy, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
+import { ArrowRightLeft, Copy, Loader2, Pencil, Plus, RefreshCw, Search, Tags, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -42,6 +42,8 @@ import type {
   ChannelAPIKey,
   ChannelAPIKeyGroup,
   ChannelAPIKeyPage,
+  ChannelAPIKeyRenameIssue,
+  ChannelAPIKeyRenameResult,
   ChannelAPIKeyReveal,
   ChannelAPIKeyStatus,
 } from "@/lib/api-types"
@@ -166,6 +168,19 @@ function sourceGroupLabel(key: ChannelAPIKey, channel: Channel, groups: ChannelA
   return `已失效：${key.group_name?.trim() || `#${key.group_id}`}`
 }
 
+const RENAME_ISSUE_LIMIT = 8
+
+// RenameIssueList 一键改名后在提示里列出跳过或失败的密钥，太多时只列前几个。
+function RenameIssueList({ issues }: { issues: ChannelAPIKeyRenameIssue[] }) {
+  const shown = issues.slice(0, RENAME_ISSUE_LIMIT)
+  return (
+    <span className="whitespace-pre-line">
+      {shown.map((item) => `${item.name || item.id}：${item.reason}`).join("\n")}
+      {issues.length > shown.length ? `\n…等 ${issues.length} 个` : null}
+    </span>
+  )
+}
+
 function statusLabel(status: string) {
   switch (status) {
     case "active":
@@ -264,6 +279,7 @@ export function ChannelAPIKeysDialog({
   const [groupsReloadTick, setGroupsReloadTick] = useState(0)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [revealingID, setRevealingID] = useState<number | null>(null)
@@ -588,6 +604,39 @@ export function ChannelAPIKeysDialog({
     }
   }
 
+  async function renameKeysToGroup() {
+    if (!channel) return
+    const ok = await confirm({
+      title: "把所有密钥的名称改成所属分组名？",
+      description: "会修改这个渠道在上游的全部密钥名称。已经同名、未分组、分组不在上游现有分组里的密钥会跳过。",
+      confirmLabel: "确认修改",
+    })
+    if (!ok) return
+    setRenaming(true)
+    try {
+      const res = await apiFetch<ChannelAPIKeyRenameResult>(`/channels/${channel.id}/api-keys/rename-to-group`, {
+        method: "POST",
+      })
+      const parts = [`已改名 ${res.renamed} 个`]
+      if (res.unchanged > 0) parts.push(`${res.unchanged} 个本来就同名`)
+      if (res.skipped.length > 0) parts.push(`跳过 ${res.skipped.length} 个`)
+      toast.success(parts.join("，"), {
+        description: res.skipped.length > 0 ? <RenameIssueList issues={res.skipped} /> : undefined,
+      })
+      if (res.failed.length > 0) {
+        toast.error(`${res.failed.length} 个密钥修改失败`, {
+          description: <RenameIssueList issues={res.failed} />,
+        })
+      }
+      reload()
+    } catch (e) {
+      const err = e as Error
+      toast.error(err.message || "修改密钥名称失败")
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   const isMigrate = mode === "migrate"
   const targetLocked = mode === "create" && actionType === "create" && targetGroup != null
   const dialogTitle = isMigrate ? "迁移 API Key" : "API 密钥管理"
@@ -669,10 +718,24 @@ export function ChannelAPIKeysDialog({
                     </Badge>
                   </div>
                 ) : (
-                  <Button type="button" size="sm" className="w-full gap-1.5 sm:w-auto" onClick={openCreate}>
-                    <Plus className="size-4" />
-                    新建密钥
-                  </Button>
+                  <div className="flex w-full gap-2 sm:w-auto">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 gap-1.5 sm:flex-none"
+                      onClick={() => void renameKeysToGroup()}
+                      disabled={renaming || loading || items.length === 0}
+                      title="把这个渠道全部密钥的名称改成各自所属的分组名"
+                    >
+                      {renaming ? <Loader2 className="size-4 animate-spin" /> : <Tags className="size-4" />}
+                      名称改为分组名
+                    </Button>
+                    <Button type="button" size="sm" className="flex-1 gap-1.5 sm:flex-none" onClick={openCreate}>
+                      <Plus className="size-4" />
+                      新建密钥
+                    </Button>
+                  </div>
                 )}
               </div>
 
