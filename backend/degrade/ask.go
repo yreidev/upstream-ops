@@ -70,10 +70,45 @@ func Ask(ctx context.Context, client *http.Client, baseURL, apiKey, installation
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return Answer{}, time.Since(start), fmt.Errorf("中转站返回 %d：%s", resp.StatusCode, truncate(strings.TrimSpace(string(snippet)), 500))
+		return Answer{}, time.Since(start), &StatusError{Code: resp.StatusCode, Body: truncate(strings.TrimSpace(string(snippet)), 500)}
 	}
 	out, err := ReadStream(io.LimitReader(resp.Body, maxStreamBytes))
 	return out, time.Since(start), err
+}
+
+// StatusError 是中转站返回的非 2xx 响应。
+type StatusError struct {
+	Code int
+	Body string
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("中转站返回 %d：%s", e.Code, e.Body) }
+
+// ModelUnavailable 判断这次请求失败是不是因为分组里没有这个模型，这时可以换下一个备选模型。
+// NewAPI 返回 503、错误码 model_not_found（“当前分组 … 下对于模型 … 无可用渠道”）；其他站点按常见写法认。
+func ModelUnavailable(err error) bool {
+	var se *StatusError
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable:
+	default:
+		return false
+	}
+	body := strings.ToLower(se.Body)
+	if strings.Contains(body, "model_not_found") || strings.Contains(body, "无可用渠道") || strings.Contains(body, "no available channel") {
+		return true
+	}
+	if !strings.Contains(body, "model") && !strings.Contains(body, "模型") {
+		return false
+	}
+	for _, s := range []string{"not found", "does not exist", "not supported", "not available", "不存在", "不支持"} {
+		if strings.Contains(body, s) {
+			return true
+		}
+	}
+	return false
 }
 
 type responseItem struct {
@@ -111,7 +146,7 @@ func ListModels(ctx context.Context, client *http.Client, baseURL, apiKey string
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("中转站返回 %d：%s", resp.StatusCode, truncate(strings.TrimSpace(string(snippet)), 500))
+		return nil, &StatusError{Code: resp.StatusCode, Body: truncate(strings.TrimSpace(string(snippet)), 500)}
 	}
 	var out struct {
 		Data []struct {

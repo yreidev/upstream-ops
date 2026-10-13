@@ -222,7 +222,7 @@ UpstreamOps 主要解决这些痛点：
 - 管理员账号密码。
 - Token 签名密钥。
 - 余额同步、倍率同步、历史清理和降智巡检的周期：选“每隔几分钟 / 每隔几小时 / 每天 / 每周 / 不运行”再填数字或时间，下面显示接下来几次的运行时间，不用写 Cron 表达式；熟悉的可以选“自定义”直接填。
-- 降智检测默认用的模型和推理强度。
+- 降智检测的备选模型（按顺序挑分组里有的）和默认推理强度。
 - 监控日志、余额快照、通知日志保留天数。
 - 上游公告保留天数。
 - 倍率变化最小推送百分比。
@@ -727,8 +727,11 @@ POST /api/cch-sync/run       立即同步一轮（后台任务，见“后台任
 
 模型和推理强度：
 
-- 默认模型 `gpt-6.1-sol`、推理强度 `low`，在设置页改；单把密钥可以在“检测用的模型”里另设。推理强度可选 `none`（请求里不带，由上游决定）、`low`、`medium`、`high`、`xhigh`、`max`。
-- 分组里没有这个模型时，中转站一般返回 503，不计费，这次记为请求失败。“检测用的模型”会从站点的 `/v1/models` 列出这把密钥能用的模型，这个接口不计费。
+- 不是每个分组都有同一个模型，所以设置页填的是按顺序排的备选模型列表，默认只有 `gpt-6.1-sol`。每轮检测前先用这把密钥查站点的 `/v1/models`（不计费），挑列表里排最前、分组里有的那个，这一轮的首测和复测都用它。列表里一个都没有时，这轮记为请求失败、状态不变，说明里列出分组能用的 GPT 模型，照着补进备选列表就行。
+- 站点查不了模型列表时，按备选顺序直接请求：首测返回“没有这个模型”（中转站一般返回 503、`model_not_found`，不计费）就换下一个，别的错误照常算请求失败。
+- 单把密钥可以在“检测用的模型”里指定模型，指定了就只用它，不走备选列表；弹窗里会列出这把密钥能用的模型，并提示留空时会挑哪个。
+- 这一轮用的模型和上一轮答过题时用的不一样（比如分组下掉了排前面的模型），照常判定，但结论、检测记录和通知里写明“这轮用的是 X，上一轮是 Y”。备选模型可能本来就答不对这道题，要自己判断是站点降智还是模型本身弱。
+- 推理强度默认 `low`，在设置页改，单把密钥也可以另设。可选 `none`（请求里不带，由上游决定）、`low`、`medium`、`high`、`xhigh`、`max`。
 
 状态怎么定：
 
@@ -755,10 +758,10 @@ POST /api/cch-sync/run       立即同步一轮（后台任务，见“后台任
 接口：
 
 ```text
-GET    /api/degrade/keys                     检测的密钥列表，带默认模型和巡检 Cron
+GET    /api/degrade/keys                     检测的密钥列表，带备选模型、默认推理强度和巡检 Cron
 POST   /api/degrade/keys                     加入：{"channel_id": 3, "upstream_key_id": 12, "key": "取不到时粘贴的完整密钥，否则留空"}
 GET    /api/degrade/candidates?channel_id=3  渠道里的上游密钥，标出哪些已加入
-PATCH  /api/degrade/keys/:id                 单独设模型和推理强度：{"model": "", "effort": ""}，留空用默认
+PATCH  /api/degrade/keys/:id                 单独设模型和推理强度：{"model": "", "effort": ""}，模型留空按备选列表挑，推理强度留空用默认
 PUT    /api/degrade/keys/:id/key             重新取完整密钥：{"key": "留空表示从站点取"}
 DELETE /api/degrade/keys/:id                 移除，检测记录一起删除
 GET    /api/degrade/keys/:id/checks          最近的检测记录，limit 默认 50、最多 500
@@ -887,7 +890,7 @@ GET  /api/jobs/:id                   单个任务，带分步进度 events 和�
 
 系统设置页支持运行时热重载，无需重启服务即可使配置生效：
 
-- 可热重载的配置模块：`app`（应用设置）、`auth`（登录鉴权）、`scheduler`（调度器）、`notifications`（通知策略）、`retention`（数据保留）、`upstream`（上游 HTTP 配置）、`degrade`（降智检测的默认模型和推理强度）。
+- 可热重载的配置模块：`app`（应用设置）、`auth`（登录鉴权）、`scheduler`（调度器）、`notifications`（通知策略）、`retention`（数据保留）、`upstream`（上游 HTTP 配置）、`degrade`（降智检测的备选模型和推理强度）。
 - 在设置页点“保存”后，调度器会按新的周期重启，通知策略（最小变化百分比、冷却时间等）会即时更新。保存前会先检查，自定义的 Cron 写错时直接报错，配置文件和正在运行的配置都不动。
 - 验证码服务和通知渠道的增删改本身即写库实时生效。
 - 直接改配置文件，以及设置页上没有的配置（如数据库路径、HTTP 端口、日志等级），需要重启服务才生效。
@@ -910,9 +913,11 @@ GET  /api/jobs/:id                   单个任务，带分步进度 events 和�
 - 上游公告按”公告保留天数”清理，0 表示不清理。
 - 倍率变化日志默认不清理。
 
-这些配置可以在系统设置页调整，也可以通过配置文件和环境变量管理。在设置页保存后，`app`、`auth`、`scheduler`、`notifications`、`retention`、`upstream`、`degrade` 会立即生效，调度器会按新配置重启。环境变量优先于配置文件：除了 `APP_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`AUTH_ENABLED`、`AUTH_TOKEN_SECRET` 这几个专门的名字，其它配置项的环境变量名是路径转大写、点换下划线，比如 `SCHEDULER_RATECRON`、`SCHEDULER_RETENTION_MONITORLOGSDAYS`、`SCHEDULER_DEGRADECRON`、`DEGRADE_MODEL`。启动和设置页保存后都按这个规则读，保存时不会把环境变量的值写进配置文件。
+这些配置可以在系统设置页调整，也可以通过配置文件和环境变量管理。在设置页保存后，`app`、`auth`、`scheduler`、`notifications`、`retention`、`upstream`、`degrade` 会立即生效，调度器会按新配置重启。环境变量优先于配置文件：除了 `APP_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`AUTH_ENABLED`、`AUTH_TOKEN_SECRET` 这几个专门的名字，其它配置项的环境变量名是路径转大写、点换下划线，比如 `SCHEDULER_RATECRON`、`SCHEDULER_RETENTION_MONITORLOGSDAYS`、`SCHEDULER_DEGRADECRON`、`DEGRADE_MODELS`。列表类的项（目前只有 `DEGRADE_MODELS`）在环境变量里用英文逗号分隔，比如 `DEGRADE_MODELS=gpt-6.1-sol,gpt-5`。启动和设置页保存后都按这个规则读，保存时不会把环境变量的值写进配置文件。
 
 配置文件和环境变量里的周期仍是带秒的 6 段 Cron（秒 分 时 日 月 周），也认 `@every 10m` 这类写法。设置页按调度器的规则算接下来几次运行时间，用的接口是 `GET /api/settings/cron/next?spec=0%20*/15%20*%20*%20*%20*`，返回 `{"next": [三个时间], "utc_offset_seconds": 服务器时区偏移}`，写错时返回 400 和中文说明。
+
+v0.6.0 的配置文件里降智检测的模型是单个的 `degrade.model`，升级后读作只有一个模型的备选列表，下次在设置页保存时改写成 `degrade.models`；环境变量 `DEGRADE_MODEL` 不再认，改用 `DEGRADE_MODELS`。
 
 ## 数据安全说明
 

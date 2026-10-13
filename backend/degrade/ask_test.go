@@ -3,6 +3,7 @@ package degrade
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,8 +153,30 @@ func TestAskReportsUpstreamStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	_, _, err := Ask(context.Background(), srv.Client(), srv.URL, "sk-test", "x", "gpt-test", "low", CandyPrompt)
-	if err == nil || !strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "model_not_found") {
+	if err == nil || !strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "model_not_found") || !ModelUnavailable(err) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestModelUnavailable(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{&StatusError{Code: 503, Body: `{"error":{"code":"model_not_found","message":"当前分组 default 下对于模型 gpt-x 无可用渠道"}}`}, true},
+		{&StatusError{Code: 503, Body: `{"error":{"message":"No available channel for model gpt-x under group default"}}`}, true},
+		{&StatusError{Code: 404, Body: `{"error":{"message":"The model gpt-x does not exist"}}`}, true},
+		{&StatusError{Code: 400, Body: `{"error":{"message":"模型 gpt-x 不支持"}}`}, true},
+		{&StatusError{Code: 503, Body: `{"error":{"message":"上游负载已饱和，请稍后再试"}}`}, false},
+		{&StatusError{Code: 401, Body: `{"error":{"code":"model_not_found"}}`}, false},
+		{&StatusError{Code: 400, Body: `{"error":{"message":"Unsupported parameter: reasoning"}}`}, false},
+		{errors.New("请求中转站：context deadline exceeded"), false},
+		{nil, false},
+	}
+	for _, tc := range cases {
+		if got := ModelUnavailable(tc.err); got != tc.want {
+			t.Errorf("ModelUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }
 

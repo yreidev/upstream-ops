@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -129,18 +130,24 @@ const (
 // DegradeEfforts 降智检测可选的推理强度，和 Codex 客户端的选项一致；none 表示不指定、由上游决定。
 var DegradeEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
 
-// DegradeConfig GPT 降智检测默认用的模型和推理强度，单把密钥可以另设。
-// Effort 为 "none" 时不指定推理强度，由上游决定。
+// DegradeConfig GPT 降智检测默认用的备选模型和推理强度，单把密钥可以另设。
+// Models 按顺序排，检测时用排最前、密钥分组里有的那个。Effort 为 "none" 时不指定推理强度，由上游决定。
 type DegradeConfig struct {
-	Model  string `mapstructure:"model" yaml:"model" json:"model"`
-	Effort string `mapstructure:"effort" yaml:"effort" json:"effort"`
+	Models []string `mapstructure:"models" yaml:"models" json:"models"`
+	Effort string   `mapstructure:"effort" yaml:"effort" json:"effort"`
 }
 
 func (d DegradeConfig) WithDefaults() DegradeConfig {
-	d.Model = strings.TrimSpace(d.Model)
-	if d.Model == "" {
-		d.Model = DefaultDegradeModel
+	models := make([]string, 0, len(d.Models))
+	for _, m := range d.Models {
+		if m = strings.TrimSpace(m); m != "" && !slices.Contains(models, m) {
+			models = append(models, m)
+		}
 	}
+	if len(models) == 0 {
+		models = []string{DefaultDegradeModel}
+	}
+	d.Models = models
 	d.Effort = strings.TrimSpace(d.Effort)
 	if d.Effort == "" {
 		d.Effort = DefaultDegradeEffort
@@ -216,6 +223,11 @@ func load(path string, withEnv bool) (*Config, string, error) {
 	cfg := &Config{}
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, "", fmt.Errorf("unmarshal config: %w", err)
+	}
+	// v0.6.0 的配置文件里是单个模型 degrade.model，当作只有一个模型的列表；在设置页保存后改写成 degrade.models
+	if old := strings.TrimSpace(v.GetString("degrade.model")); old != "" && v.InConfig("degrade.model") && !v.InConfig("degrade.models") &&
+		!(withEnv && os.Getenv("DEGRADE_MODELS") != "") {
+		cfg.Degrade.Models = []string{old}
 	}
 	cfg.Upstream = cfg.Upstream.WithDefaults()
 	cfg.Degrade = cfg.Degrade.WithDefaults()
@@ -302,7 +314,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("upstream.timeoutSeconds", DefaultUpstreamTimeoutSeconds)
 	v.SetDefault("upstream.userAgent", DefaultUpstreamUserAgent)
 
-	v.SetDefault("degrade.model", DefaultDegradeModel)
+	v.SetDefault("degrade.models", []string{DefaultDegradeModel})
 	v.SetDefault("degrade.effort", DefaultDegradeEffort)
 
 	v.SetDefault("log.level", "info")

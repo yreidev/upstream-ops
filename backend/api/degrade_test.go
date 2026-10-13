@@ -49,6 +49,9 @@ func TestDegradeRoutes(t *testing.T) {
 	svc.Ask = func(context.Context, string, string, string, string, string) (degrade.Answer, time.Duration, error) {
 		return degrade.Answer{Text: "最少要取 21 个。"}, time.Second, nil
 	}
+	svc.FetchModels = func(context.Context, string, string) ([]string, error) {
+		return []string{"gpt-6.1-sol", "gpt-5"}, nil
+	}
 	env.deps.Degrade = svc
 	registerDegrade(env.r.Group("/api"), env.deps)
 
@@ -77,7 +80,7 @@ func TestDegradeRoutes(t *testing.T) {
 	id := strconv.Itoa(int(created.Data.ID))
 
 	code, data := env.get(t, "/api/degrade/keys")
-	if code != http.StatusOK || !strings.Contains(string(data), `"effective_model":"gpt-6.1-sol"`) ||
+	if code != http.StatusOK || !strings.Contains(string(data), `"models":["gpt-6.1-sol"]`) ||
 		!strings.Contains(string(data), `"channel_name":"演示站"`) || strings.Contains(string(data), degradeTestKey) {
 		t.Fatalf("list = %d %s", code, data)
 	}

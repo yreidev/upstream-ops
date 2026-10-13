@@ -33,7 +33,7 @@ const (
 )
 
 // DegradeKey 参与降智检测的一把上游密钥。完整密钥加密存在 KeyCipher，不经接口返回。
-// Model / Effort 为空表示用设置页的默认值；Effort 为 "none" 表示不指定推理强度，由上游决定。
+// Model 为空表示按设置页的备选模型列表挑，Effort 为空表示用默认值；Effort 为 "none" 表示不指定推理强度，由上游决定。
 type DegradeKey struct {
 	ID            uint             `gorm:"primaryKey" json:"id"`
 	ChannelID     uint             `gorm:"not null;uniqueIndex:idx_degrade_keys_upstream" json:"channel_id"`
@@ -48,10 +48,11 @@ type DegradeKey struct {
 	State         DegradeState     `gorm:"size:16;not null;default:'unknown'" json:"state"`
 	// StateChangedAt 最近一次确认状态的时间；还没确认过时为空。
 	StateChangedAt *time.Time `json:"state_changed_at,omitempty"`
-	// 最近一轮检测：时间、首测结果和一句话说明。
+	// 最近一轮检测：时间、首测结果、一句话说明，以及最近一轮答过题时用的模型（换了模型时在说明里写明）。
 	LastCheckedAt *time.Time    `json:"last_checked_at,omitempty"`
 	LastResult    DegradeResult `gorm:"size:16;not null;default:''" json:"last_result,omitempty"`
 	LastMessage   string        `gorm:"type:text" json:"last_message,omitempty"`
+	LastModel     string        `gorm:"size:128;not null;default:''" json:"last_model,omitempty"`
 	CreatedAt     time.Time     `json:"created_at"`
 	UpdatedAt     time.Time     `json:"updated_at"`
 }
@@ -130,8 +131,8 @@ func (r *DegradeKeys) UpdateModel(id uint, model, effort string) error {
 	}).Error
 }
 
-// RecordRound 记下一轮检测的结论；state 非空时同时改确认状态。
-func (r *DegradeKeys) RecordRound(id uint, at time.Time, result DegradeResult, message string, state DegradeState) error {
+// RecordRound 记下一轮检测的结论；state 非空时同时改确认状态，model 非空时记下这轮答题用的模型。
+func (r *DegradeKeys) RecordRound(id uint, at time.Time, result DegradeResult, message string, state DegradeState, model string) error {
 	updates := map[string]any{
 		"last_checked_at": at,
 		"last_result":     result,
@@ -140,6 +141,9 @@ func (r *DegradeKeys) RecordRound(id uint, at time.Time, result DegradeResult, m
 	if state != "" {
 		updates["state"] = state
 		updates["state_changed_at"] = at
+	}
+	if model != "" {
+		updates["last_model"] = model
 	}
 	return r.db.Model(&DegradeKey{}).Where("id = ?", id).Updates(updates).Error
 }

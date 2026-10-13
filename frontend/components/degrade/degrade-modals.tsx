@@ -250,7 +250,7 @@ export function DegradeReplaceKeyModal({ target, onClose, onSaved }: {
   )
 }
 
-/** 单独给一把密钥设模型和推理强度；留空用设置页的默认值。模型列表从中转站的 /v1/models 取，不计费。 */
+/** 单独给一把密钥设模型和推理强度；模型留空按设置页的备选列表挑，推理强度留空用默认值。模型列表从中转站的 /v1/models 取，不计费。 */
 export function DegradeModelModal({ target, defaults, onClose, onSaved }: {
   target: DegradeKey | null
   defaults: SystemDegradeConfig | undefined
@@ -285,6 +285,13 @@ export function DegradeModelModal({ target, defaults, onClose, onSaved }: {
       cancelled = true
     }
   }, [targetId])
+
+  // 留空时按备选列表会挑哪个：排最前、分组里有的那个
+  const candidates = defaults?.models ?? []
+  const autoPick = candidates.find((m) => models.some((a) => a.toLowerCase() === m.toLowerCase()))
+  const autoPickText = autoPick
+    ? `留空时会用 ${autoPick}（备选：${candidates.join("、")}）。`
+    : `备选模型（${candidates.join("、")}）分组里都没有，留空时检测会请求失败：在这里指定一个，或去设置页补备选模型。`
 
   // 打开时带上这把密钥现在的设置
   const [loadedFor, setLoadedFor] = useState<number | null>(null)
@@ -341,7 +348,7 @@ export function DegradeModelModal({ target, defaults, onClose, onSaved }: {
             onChange={(v) => setModel(String(v ?? ""))}
             showClear
             loading={loadingModels}
-            placeholder={`留空用默认的 ${defaults?.model ?? ""}`}
+            placeholder="留空按设置页的备选模型自动挑"
             style={{ width: "100%" }}
             maxHeight={280}
           />
@@ -350,7 +357,7 @@ export function DegradeModelModal({ target, defaults, onClose, onSaved }: {
               ? `取不到这把密钥能用的模型（${modelsError}），可以直接填模型名。`
               : loadingModels
                 ? "正在读取这把密钥能用的模型…"
-                : `这把密钥能用 ${models.length} 个模型${models.length ? `，其中 ${gptCount} 个带 gpt` : ""}。分组里没有默认模型时，检测会一直请求失败。`}
+                : `这把密钥能用 ${models.length} 个模型${models.length ? `，其中 ${gptCount} 个带 gpt` : ""}。${autoPickText}`}
           </Typography.Text>
         </div>
         <div className="stack" style={{ gap: 4 }}>

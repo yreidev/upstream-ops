@@ -19,6 +19,10 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : ""
 }
 
+function strList(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((s) => str(s).trim()).filter(Boolean) : []
+}
+
 function num(v: unknown): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
@@ -70,7 +74,7 @@ function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfi
     },
     degrade: {
       ...base.degrade,
-      model: str(v.degrade?.model),
+      models: strList(v.degrade?.models),
       effort: str(v.degrade?.effort),
     },
   }
@@ -223,7 +227,18 @@ export default function SettingsPage() {
               offText="不定时巡检，只在“降智检测”页手动检测。"
               {...lock("scheduler.degradeCron")}
             />
-            <Form.Input field="degrade.model" label="默认模型" extraText="密钥没有单独设置时用这个模型，中转站的分组里得有它。" className="mono" {...lock("degrade.model")} />
+            <Form.TagInput
+              field="degrade.models"
+              label="备选模型"
+              extraText="按顺序排，每轮先查分组能用哪些模型，用排最前、分组里有的那个；查不到时按顺序试，分组里没有就换下一个。输入后按回车添加，拖动调整顺序。"
+              placeholder="例如 gpt-6.1-sol"
+              draggable
+              addOnBlur
+              separator={[",", "，", " "]}
+              className="mono"
+              style={{ width: "100%" }}
+              {...lock("degrade.models")}
+            />
             <Form.Select
               field="degrade.effort"
               label="默认推理强度"

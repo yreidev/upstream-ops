@@ -197,7 +197,7 @@ func TestSaveSettingsDegrade(t *testing.T) {
 			"scheduler":{"balanceCron":"","rateCron":"","degradeCron":"` + degradeCron + `","retention":{"cron":""}},
 			"notifications":{"minChangePct":0,"balanceLowCooldownMinutes":60,"sendMaxAttempts":3},
 			"upstream":{},
-			"degrade":{"model":"gpt-test","effort":"` + effort + `"}
+			"degrade":{"models":["gpt-test"," gpt-next ","gpt-test",""],"effort":"` + effort + `"}
 		}`
 	}
 	if rec := putSettings(r, body("0 0 * * *", "low")); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "降智巡检 Cron") {
@@ -213,11 +213,11 @@ func TestSaveSettingsDegrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if got.Scheduler.DegradeCron != "0 0 */6 * * *" || got.Degrade.Model != "gpt-test" || got.Degrade.Effort != "high" {
+	if got.Scheduler.DegradeCron != "0 0 */6 * * *" || strings.Join(got.Degrade.Models, ",") != "gpt-test,gpt-next" || got.Degrade.Effort != "high" {
 		t.Fatalf("saved scheduler = %#v degrade = %#v", got.Scheduler, got.Degrade)
 	}
-	// 保存后默认模型立即生效
-	if applied.Model != "gpt-test" || applied.Effort != "high" {
+	// 保存后备选模型立即生效，去掉空白和重复
+	if strings.Join(applied.Models, ",") != "gpt-test,gpt-next" || applied.Effort != "high" {
 		t.Fatalf("applied = %#v", applied)
 	}
 	// 留空回到默认值

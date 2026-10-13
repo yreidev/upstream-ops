@@ -30,6 +30,10 @@ const (
 	recoveryWait = 240 * time.Second
 	// checkAllConcurrency 全部检测时同时测几把密钥。
 	checkAllConcurrency = 3
+	// listModelsTimeout 每轮检测前查分组能用的模型最长等多久。
+	listModelsTimeout = 30 * time.Second
+	// maxListedModels 备选模型分组里一个都没有时，说明里最多列出几个能用的模型。
+	maxListedModels = 10
 	// maxAnswerRunes 检测记录里最多存多少字的回答。
 	maxAnswerRunes = 20000
 )
@@ -48,8 +52,14 @@ type Notifier interface {
 // AskFunc 发一次糖果题，测试里换成假的。
 type AskFunc func(ctx context.Context, baseURL, apiKey, installation, model, effort string) (Answer, time.Duration, error)
 
+// FetchModelsFunc 用密钥列出分组能用的模型，测试里换成假的。
+type FetchModelsFunc func(ctx context.Context, baseURL, apiKey string) ([]string, error)
+
 // ErrBusy 表示这把密钥正在检测。
 var ErrBusy = errors.New("这把密钥正在检测，等这轮跑完再试")
+
+// errSwitchModel 表示首测时分组里没有这个模型，换下一个备选模型再测。
+var errSwitchModel = errors.New("分组里没有这个模型")
 
 // RevealError 表示站点不让从接口取完整密钥，页面据此让用户手动粘贴。
 type RevealError struct{ Err error }
@@ -65,8 +75,9 @@ type Service struct {
 	cipher   *crypto.Cipher
 	log      *slog.Logger
 
-	// Ask 发一次糖果题；RecoveryWait 是恢复确认前的等待。测试里替换。
+	// Ask 发一次糖果题；FetchModels 查分组能用的模型；RecoveryWait 是恢复确认前的等待。测试里替换。
 	Ask          AskFunc
+	FetchModels  FetchModelsFunc
 	RecoveryWait time.Duration
 
 	mu       sync.Mutex
@@ -86,13 +97,16 @@ func NewService(repo *storage.DegradeKeys, channels *storage.Channels, keys KeyS
 		Ask: func(ctx context.Context, baseURL, apiKey, installation, model, effort string) (Answer, time.Duration, error) {
 			return Ask(ctx, client, baseURL, apiKey, installation, model, effort, CandyPrompt)
 		},
+		FetchModels: func(ctx context.Context, baseURL, apiKey string) ([]string, error) {
+			return ListModels(ctx, client, baseURL, apiKey)
+		},
 		RecoveryWait: recoveryWait,
 		defaults:     config.DegradeConfig{}.WithDefaults(),
 		busy:         map[uint]bool{},
 	}
 }
 
-// UpdateDefaults 换上设置页保存的默认模型和推理强度。
+// UpdateDefaults 换上设置页保存的备选模型列表和默认推理强度。
 func (s *Service) UpdateDefaults(cfg config.DegradeConfig) {
 	s.mu.Lock()
 	s.defaults = cfg.WithDefaults()
@@ -105,27 +119,27 @@ func (s *Service) Defaults() config.DegradeConfig {
 	return s.defaults
 }
 
-// modelOf 返回这把密钥实际用的模型和推理强度（单独设了就用单独的）。
-func (s *Service) modelOf(k *storage.DegradeKey) (model, effort string) {
+// modelsOf 返回这把密钥要试的模型（单独指定了就只用它，否则是设置页的备选列表）和推理强度。
+func (s *Service) modelsOf(k *storage.DegradeKey) (models []string, effort string) {
 	d := s.Defaults()
-	model, effort = d.Model, d.Effort
-	if strings.TrimSpace(k.Model) != "" {
-		model = strings.TrimSpace(k.Model)
+	models, effort = d.Models, d.Effort
+	if m := strings.TrimSpace(k.Model); m != "" {
+		models = []string{m}
 	}
 	if strings.TrimSpace(k.Effort) != "" {
 		effort = strings.TrimSpace(k.Effort)
 	}
-	return model, effort
+	return models, effort
 }
 
-// KeyView 是页面上看到的一把密钥。
+// KeyView 是页面上看到的一把密钥。Models 是这把密钥要试的模型，单独指定了就只有一个。
 type KeyView struct {
 	storage.DegradeKey
-	ChannelName     string `json:"channel_name"`
-	ChannelType     string `json:"channel_type"`
-	EffectiveModel  string `json:"effective_model"`
-	EffectiveEffort string `json:"effective_effort"`
-	Checking        bool   `json:"checking"`
+	ChannelName     string   `json:"channel_name"`
+	ChannelType     string   `json:"channel_type"`
+	Models          []string `json:"models"`
+	EffectiveEffort string   `json:"effective_effort"`
+	Checking        bool     `json:"checking"`
 }
 
 // List 列出全部参与检测的密钥。
@@ -151,11 +165,11 @@ func (s *Service) List() ([]KeyView, error) {
 	out := make([]KeyView, 0, len(keys))
 	for i := range keys {
 		k := &keys[i]
-		model, effort := s.modelOf(k)
+		models, effort := s.modelsOf(k)
 		c := byID[k.ChannelID]
 		out = append(out, KeyView{
 			DegradeKey: *k, ChannelName: c.Name, ChannelType: string(c.Type),
-			EffectiveModel: model, EffectiveEffort: effort, Checking: busy[k.ID],
+			Models: models, EffectiveEffort: effort, Checking: busy[k.ID],
 		})
 	}
 	return out, nil
@@ -294,7 +308,7 @@ func (s *Service) fullKey(ctx context.Context, channelID uint, upstream *connect
 	return full, storage.DegradeKeyRevealed, nil
 }
 
-// UpdateModel 改这把密钥单独用的模型和推理强度，留空表示用默认值。
+// UpdateModel 改这把密钥单独用的模型和推理强度；模型留空表示按备选列表挑，推理强度留空表示用默认值。
 func (s *Service) UpdateModel(id uint, model, effort string) (*storage.DegradeKey, error) {
 	model, effort = strings.TrimSpace(model), strings.TrimSpace(effort)
 	if effort != "" && !slices.Contains(config.DegradeEfforts, effort) {
@@ -327,9 +341,58 @@ func (s *Service) Models(ctx context.Context, id uint) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
 	defer cancel()
-	return ListModels(ctx, http.DefaultClient, c.SiteURL, apiKey)
+	return s.FetchModels(ctx, c.SiteURL, apiKey)
+}
+
+// pickModels 挑出这轮按顺序要试的模型：单独指定了模型就只用它；否则先查分组能用的模型，留下备选列表里分组有的，
+// skipped 是排在它们前面、分组里没有的。查不了模型列表时按备选顺序全试，首测遇到“没有这个模型”再换下一个。
+func (s *Service) pickModels(ctx context.Context, k *storage.DegradeKey, c *storage.Channel, apiKey string, candidates []string) (usable, skipped []string, err error) {
+	if strings.TrimSpace(k.Model) != "" || len(candidates) == 0 {
+		return candidates, nil, nil
+	}
+	lctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
+	available, listErr := s.FetchModels(lctx, c.SiteURL, apiKey)
+	cancel()
+	if listErr != nil {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if len(candidates) > 1 {
+			progress.OK(ctx, progress.StageDegrade, "查不到分组能用的模型（"+listErr.Error()+"），按备选顺序试")
+		}
+		return candidates, nil, nil
+	}
+	for _, m := range candidates {
+		if slices.ContainsFunc(available, func(a string) bool { return strings.EqualFold(a, m) }) {
+			usable = append(usable, m)
+		} else if len(usable) == 0 {
+			skipped = append(skipped, m)
+		}
+	}
+	if len(usable) == 0 {
+		return nil, skipped, fmt.Errorf("分组里没有备选的模型（%s），%s", strings.Join(candidates, "、"), listGPT(available))
+	}
+	return usable, skipped, nil
+}
+
+// listGPT 列出分组里能用的 GPT 模型，供在设置页补备选模型时参考。
+func listGPT(available []string) string {
+	var gpt []string
+	for _, m := range available {
+		if strings.Contains(strings.ToLower(m), "gpt") {
+			gpt = append(gpt, m)
+		}
+	}
+	switch {
+	case len(gpt) == 0:
+		return "分组里也没有其他 GPT 模型"
+	case len(gpt) > maxListedModels:
+		return fmt.Sprintf("能用的 GPT 模型有 %s 等 %d 个", strings.Join(gpt[:maxListedModels], "、"), len(gpt))
+	default:
+		return "能用的 GPT 模型有 " + strings.Join(gpt, "、")
+	}
 }
 
 // load 读出密钥、所属渠道和解密后的完整密钥。
@@ -488,6 +551,9 @@ type Round struct {
 	Model   string                  `json:"model"`
 	Effort  string                  `json:"effort"`
 	Results []storage.DegradeResult `json:"results"`
+	// Skipped 是排在 Model 前面、分组里没有的备选模型；PrevModel 是上一轮答过题时用的模型。
+	Skipped   []string `json:"skipped,omitempty"`
+	PrevModel string   `json:"prev_model,omitempty"`
 	// Before / State 是这轮前后的确认状态，Changed 表示这轮改了状态。
 	Before  storage.DegradeState `json:"before"`
 	State   storage.DegradeState `json:"state"`
@@ -508,11 +574,25 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 	if err != nil {
 		return nil, err
 	}
-	model, effort := s.modelOf(k)
-	round := &Round{KeyID: k.ID, Label: keyLabel(c.Name, k), Model: model, Effort: effort, Before: k.State, State: k.State}
+	candidates, effort := s.modelsOf(k)
+	round := &Round{KeyID: k.ID, Label: keyLabel(c.Name, k), Effort: effort, PrevModel: k.LastModel, Before: k.State, State: k.State}
 	installation := fmt.Sprintf("upstream-ops:%d:%d", k.ChannelID, k.UpstreamKeyID)
 
-	ask := func(attempt int) (storage.DegradeResult, error) {
+	models, skipped, err := s.pickModels(ctx, k, c, apiKey, candidates)
+	round.Skipped = skipped
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		progress.Fail(ctx, progress.StageDegrade, err.Error())
+		round.Err = err.Error()
+		round.Message = "请求失败，状态不变：" + err.Error()
+		s.finish(ctx, k, c, round, storage.DegradeFailed)
+		return round, nil
+	}
+
+	// ask 用 model 测一次；canSwitch 表示首测时分组里没有这个模型可以换下一个备选，这时不记这次，返回 errSwitchModel。
+	ask := func(attempt int, model string, canSwitch bool) (storage.DegradeResult, error) {
 		label := "首测"
 		if attempt > 1 {
 			label = fmt.Sprintf("复测第 %d 次", attempt-1)
@@ -523,6 +603,10 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 		cancel()
 		if askErr != nil && ctx.Err() != nil {
 			return "", ctx.Err() // 任务被取消（服务停止或超时），这次不记
+		}
+		if canSwitch && ModelUnavailable(askErr) {
+			progress.OK(ctx, progress.StageDegrade, model+"：分组里没有这个模型，换下一个")
+			return "", errSwitchModel
 		}
 		check := &storage.DegradeCheck{
 			KeyID: k.ID, ChannelID: k.ChannelID, Attempt: attempt, Model: model, Effort: effort,
@@ -554,7 +638,15 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 		return check.Result, askErr
 	}
 
-	first, err := ask(1)
+	var first storage.DegradeResult
+	for i, model := range models {
+		round.Model = model
+		first, err = ask(1, model, i < len(models)-1)
+		if !errors.Is(err, errSwitchModel) {
+			break
+		}
+		round.Skipped = append(round.Skipped, model)
+	}
 	if err != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -578,7 +670,7 @@ func (s *Service) checkKey(ctx context.Context, id uint) (*Round, error) {
 			}
 		}
 		for attempt := 2; attempt <= 3; attempt++ {
-			if _, err := ask(attempt); err != nil {
+			if _, err := ask(attempt, round.Model, false); err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
@@ -626,12 +718,20 @@ func (s *Service) decide(k *storage.DegradeKey, round *Round) {
 }
 
 // finish 记下这轮结论，状态变了就发通知：确认降智、确认恢复都发；未确认的密钥第一次定为正常不发。
+// 换了备选模型、或和上一轮用的模型不一样时，在结论后面写明。
 func (s *Service) finish(ctx context.Context, k *storage.DegradeKey, c *storage.Channel, round *Round, first storage.DegradeResult) {
+	if note := modelNote(round); note != "" {
+		round.Message += "；" + note
+	}
 	state := storage.DegradeState("")
 	if round.Changed {
 		state = round.State
 	}
-	if err := s.repo.RecordRound(k.ID, time.Now(), first, round.Message, state); err != nil {
+	answered := ""
+	if slices.ContainsFunc(round.Results, func(r storage.DegradeResult) bool { return r != storage.DegradeFailed }) {
+		answered = round.Model
+	}
+	if err := s.repo.RecordRound(k.ID, time.Now(), first, round.Message, state, answered); err != nil {
 		s.log.Warn("record degrade round", "key", k.ID, "err", err)
 	}
 	if round.Err == "" {
@@ -643,6 +743,25 @@ func (s *Service) finish(ctx context.Context, k *storage.DegradeKey, c *storage.
 	if err := s.notifier.Dispatch(ctx, buildMessage(k, c, round)); err != nil {
 		s.log.Warn("dispatch degrade notification", "key", k.ID, "err", err)
 	}
+}
+
+// modelNote 说明这轮的模型是怎么来的：跳过了分组里没有的备选模型，或者和上一轮答题用的模型不一样。
+func modelNote(round *Round) string {
+	if round.Model == "" {
+		return ""
+	}
+	var parts []string
+	if len(round.Skipped) > 0 {
+		parts = append(parts, fmt.Sprintf("分组里没有 %s，改用 %s", strings.Join(round.Skipped, "、"), round.Model))
+	}
+	if round.PrevModel != "" && round.PrevModel != round.Model {
+		if len(parts) > 0 {
+			parts = append(parts, "上一轮用的是 "+round.PrevModel)
+		} else {
+			parts = append(parts, fmt.Sprintf("这轮用的是 %s，上一轮是 %s", round.Model, round.PrevModel))
+		}
+	}
+	return strings.Join(parts, "，")
 }
 
 func buildMessage(k *storage.DegradeKey, c *storage.Channel, round *Round) notify.Message {

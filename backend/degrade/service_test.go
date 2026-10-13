@@ -52,7 +52,7 @@ func (f *fakeNotifier) Dispatch(_ context.Context, msg notify.Message) error {
 	return nil
 }
 
-// script 按顺序给出每次提问的结果："ok" 答对、"bad" 答错、"err" 请求失败。
+// script 按顺序给出每次提问的结果："ok" 答对、"bad" 答错、"err" 请求失败、"none" 分组里没有这个模型。
 type script struct {
 	mu      sync.Mutex
 	answers []string
@@ -75,8 +75,10 @@ func (s *script) ask(_ context.Context, _, apiKey, _, model, effort string) (Ans
 		return Answer{Text: "最少要取 21 个。", InputTokens: 100, OutputTokens: 10}, time.Second, nil
 	case "bad":
 		return Answer{Text: "最少要取 29 个。"}, time.Second, nil
+	case "none":
+		return Answer{}, 0, &StatusError{Code: 503, Body: `{"error":{"code":"model_not_found","message":"当前分组 default 下对于模型 ` + model + ` 无可用渠道"}}`}
 	default:
-		return Answer{}, 0, errors.New("中转站返回 503")
+		return Answer{}, 0, &StatusError{Code: 503, Body: "上游负载已饱和"}
 	}
 }
 
@@ -87,7 +89,9 @@ type env struct {
 	notifier *fakeNotifier
 	script   *script
 	channel  *storage.Channel
-	waited   bool
+	// available 是分组能用的模型，为 nil 时表示站点查不了模型列表；listCalls 是查了几次。
+	available []string
+	listCalls int
 }
 
 func newEnv(t *testing.T) *env {
@@ -120,6 +124,13 @@ func newEnv(t *testing.T) *env {
 	}
 	e.svc = NewService(e.repo, channels, e.keys, e.notifier, cipher, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.svc.Ask = e.script.ask
+	e.svc.FetchModels = func(context.Context, string, string) ([]string, error) {
+		e.listCalls++
+		if e.available == nil {
+			return nil, &StatusError{Code: 404, Body: "not found"}
+		}
+		return e.available, nil
+	}
 	e.svc.RecoveryWait = 0
 	return e
 }
@@ -132,7 +143,7 @@ func (e *env) addKey(t *testing.T, state storage.DegradeState) *storage.DegradeK
 		t.Fatalf("add: %v", err)
 	}
 	if state != storage.DegradeUnknown {
-		if err := e.repo.RecordRound(k.ID, time.Now(), storage.DegradeCorrect, "", state); err != nil {
+		if err := e.repo.RecordRound(k.ID, time.Now(), storage.DegradeCorrect, "", state, ""); err != nil {
 			t.Fatalf("set state: %v", err)
 		}
 	}
@@ -235,7 +246,7 @@ func TestRecoveryWaitsBeforeRetest(t *testing.T) {
 func TestModelAndEffortOverrides(t *testing.T) {
 	e := newEnv(t)
 	k := e.addKey(t, storage.DegradeNormal)
-	e.svc.UpdateDefaults(config.DegradeConfig{Model: "gpt-default", Effort: "medium"})
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-default"}, Effort: "medium"})
 	if _, err := e.run(t, k.ID, "ok"); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -254,6 +265,138 @@ func TestModelAndEffortOverrides(t *testing.T) {
 	}
 	if _, err := e.svc.UpdateModel(k.ID, "", "extreme"); err == nil {
 		t.Fatal("unknown effort must be rejected")
+	}
+}
+
+func TestPicksFirstListedModelTheGroupHas(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeUnknown)
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b", "gpt-c"}})
+	e.available = []string{"claude-x", "GPT-C", "gpt-b"}
+	round, err := e.run(t, k.ID, "ok", "ok", "ok")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// 首测和复测都用分组里有的、排最前的 gpt-b
+	if strings.Join(e.script.calls, ",") != "gpt-b/low,gpt-b/low,gpt-b/low" {
+		t.Fatalf("calls = %v", e.script.calls)
+	}
+	if round.Model != "gpt-b" || round.State != storage.DegradeNormal || !strings.Contains(round.Message, "分组里没有 gpt-a，改用 gpt-b") {
+		t.Fatalf("round = %+v", round)
+	}
+	if got, _ := e.repo.Get(k.ID); got.LastModel != "gpt-b" || got.LastMessage != round.Message {
+		t.Fatalf("stored key = %+v", got)
+	}
+}
+
+func TestNoListedModelInGroup(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeNormal)
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	e.available = []string{"claude-x", "gpt-z"}
+	round, err := e.run(t, k.ID, "ok")
+	if err == nil || len(e.script.calls) != 0 {
+		t.Fatalf("err = %v, calls = %v", err, e.script.calls)
+	}
+	if round.State != storage.DegradeNormal || !strings.Contains(round.Message, "gpt-a、gpt-b") || !strings.Contains(round.Message, "能用的 GPT 模型有 gpt-z") {
+		t.Fatalf("round = %+v", round)
+	}
+	got, _ := e.repo.Get(k.ID)
+	if got.State != storage.DegradeNormal || got.LastResult != storage.DegradeFailed || got.LastModel != "" {
+		t.Fatalf("stored key = %+v", got)
+	}
+	if len(e.notifier.msgs) != 0 {
+		t.Fatalf("notifications = %+v", e.notifier.msgs)
+	}
+}
+
+func TestSwitchesModelWhenGroupLacksIt(t *testing.T) {
+	// 站点查不了模型列表，按备选顺序试，首测遇到“没有这个模型”换下一个，不记那次
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeUnknown)
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	round, err := e.run(t, k.ID, "none", "bad", "bad", "bad")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.Join(e.script.calls, ",") != "gpt-a/low,gpt-b/low,gpt-b/low,gpt-b/low" {
+		t.Fatalf("calls = %v", e.script.calls)
+	}
+	if round.State != storage.DegradeDegraded || len(round.Results) != 3 || !strings.Contains(round.Message, "分组里没有 gpt-a，改用 gpt-b") {
+		t.Fatalf("round = %+v", round)
+	}
+	if checks, _ := e.repo.ListChecks(k.ID, 10); len(checks) != 3 || checks[0].Model != "gpt-b" {
+		t.Fatalf("checks = %+v", checks)
+	}
+	if len(e.notifier.msgs) != 1 || !strings.Contains(e.notifier.msgs[0].Body, "改用 gpt-b") {
+		t.Fatalf("notifications = %+v", e.notifier.msgs)
+	}
+
+	// 最后一个也没有：照常算请求失败，状态不变
+	e2 := newEnv(t)
+	k2 := e2.addKey(t, storage.DegradeNormal)
+	e2.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	round, err = e2.run(t, k2.ID, "none", "none")
+	if err == nil || round.State != storage.DegradeNormal || len(round.Results) != 1 || !strings.Contains(round.Message, "model_not_found") {
+		t.Fatalf("round = %+v, err = %v", round, err)
+	}
+
+	// 别的错误不换模型
+	e3 := newEnv(t)
+	k3 := e3.addKey(t, storage.DegradeNormal)
+	e3.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	if _, err := e3.run(t, k3.ID, "err", "ok"); err == nil || strings.Join(e3.script.calls, ",") != "gpt-a/low" {
+		t.Fatalf("err = %v, calls = %v", err, e3.script.calls)
+	}
+}
+
+func TestOwnModelSkipsFallback(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeNormal)
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	if _, err := e.svc.UpdateModel(k.ID, "gpt-own", ""); err != nil {
+		t.Fatalf("update model: %v", err)
+	}
+	if _, err := e.run(t, k.ID, "none", "ok"); err == nil || strings.Join(e.script.calls, ",") != "gpt-own/low" || e.listCalls != 0 {
+		t.Fatalf("err = %v, calls = %v, list calls = %d", err, e.script.calls, e.listCalls)
+	}
+}
+
+func TestModelChangeIsNoted(t *testing.T) {
+	e := newEnv(t)
+	k := e.addKey(t, storage.DegradeNormal)
+	e.svc.UpdateDefaults(config.DegradeConfig{Models: []string{"gpt-a", "gpt-b"}})
+	e.available = []string{"gpt-a", "gpt-b"}
+	if round, err := e.run(t, k.ID, "ok"); err != nil || strings.Contains(round.Message, "上一轮") {
+		t.Fatalf("first round = %+v, %v", round, err)
+	}
+	// 分组下掉了 gpt-a，换成备选 gpt-b 后答错：照常判定，写明换了模型
+	e.available = []string{"gpt-b"}
+	round, err := e.run(t, k.ID, "bad", "bad", "bad")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if round.State != storage.DegradeDegraded || round.PrevModel != "gpt-a" ||
+		!strings.Contains(round.Message, "确认降智；分组里没有 gpt-a，改用 gpt-b，上一轮用的是 gpt-a") {
+		t.Fatalf("round = %+v", round)
+	}
+	if len(e.notifier.msgs) != 1 || !strings.Contains(e.notifier.msgs[0].Body, "上一轮用的是 gpt-a") {
+		t.Fatalf("notifications = %+v", e.notifier.msgs)
+	}
+	// 单独指定了模型：只写和上一轮不一样
+	if _, err := e.svc.UpdateModel(k.ID, "gpt-own", ""); err != nil {
+		t.Fatalf("update model: %v", err)
+	}
+	round, err = e.run(t, k.ID, "bad")
+	if err != nil || round.Message != "首测答错，保持降智；这轮用的是 gpt-own，上一轮是 gpt-b" {
+		t.Fatalf("round = %+v, %v", round, err)
+	}
+	// 请求失败的一轮不算答过题，不改记下的模型
+	if _, err := e.run(t, k.ID, "err"); err == nil {
+		t.Fatal("want failure")
+	}
+	if got, _ := e.repo.Get(k.ID); got.LastModel != "gpt-own" {
+		t.Fatalf("last model = %q", got.LastModel)
 	}
 }
 

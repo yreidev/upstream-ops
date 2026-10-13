@@ -344,19 +344,23 @@ export default function DegradePage() {
     },
     {
       title: "模型",
-      dataIndex: "effective_model",
+      key: "model",
       width: 200,
-      render: (v: string, k) => (
-        <div className="stack" style={{ gap: 2 }}>
-          <Typography.Text size="small" className="mono">
-            {v}
-          </Typography.Text>
-          <Typography.Text type="tertiary" size="small">
-            推理强度 {degradeEffortLabel(k.effective_effort)}
-            {k.model || k.effort ? " · 单独设置" : ""}
-          </Typography.Text>
-        </div>
-      ),
+      render: (_: unknown, k) => {
+        // 单独指定了就是它；否则显示最近一轮答题用的，还没检测过时说明会按备选列表挑
+        const model = k.model || k.last_model
+        return (
+          <div className="stack" style={{ gap: 2 }}>
+            <Typography.Text size="small" className={model ? "mono" : undefined} type={model ? undefined : "tertiary"}>
+              {model || "检测时按备选列表挑"}
+            </Typography.Text>
+            <Typography.Text type="tertiary" size="small">
+              {k.model ? "单独指定" : "自动挑选"} · 推理强度 {degradeEffortLabel(k.effective_effort)}
+              {k.effort ? "（单独设置）" : ""}
+            </Typography.Text>
+          </div>
+        )
+      },
     },
     {
       title: "操作",
@@ -419,7 +423,7 @@ export default function DegradePage() {
               ) : (
                 "没开定时巡检，可以在设置页的“降智巡检”选周期。"
               )}
-              {defaults ? `默认模型 ${defaults.model}，推理强度 ${degradeEffortLabel(defaults.effort)}。` : ""}
+              {defaults ? `备选模型 ${defaults.models.join("、")}，推理强度 ${degradeEffortLabel(defaults.effort)}。` : ""}
             </span>
           </>
         }

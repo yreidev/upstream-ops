@@ -338,7 +338,8 @@ export interface SystemUpstreamConfig {
 
 /** GPT 降智检测的默认模型和推理强度，单把密钥可以另设。 */
 export interface SystemDegradeConfig {
-  model: string
+  /** 备选模型，按顺序挑分组里有的第一个 */
+  models: string[]
   effort: string
 }
 
@@ -392,7 +393,7 @@ export interface CCHSyncSettings {
 export type DegradeState = "unknown" | "normal" | "degraded"
 export type DegradeResult = "correct" | "wrong" | "failed"
 
-/** 参与检测的一把密钥；model / effort 为空表示用默认值，effective_* 是实际用的。 */
+/** 参与检测的一把密钥；model 为空表示按备选模型列表挑，effort 为空表示用默认值。 */
 export interface DegradeKey {
   id: number
   channel_id: number
@@ -408,11 +409,14 @@ export interface DegradeKey {
   last_checked_at?: string
   last_result?: DegradeResult
   last_message?: string
+  /** 最近一轮答过题时用的模型 */
+  last_model?: string
   created_at: string
   updated_at: string
   channel_name: string
   channel_type: ChannelType | ""
-  effective_model: string
+  /** 要试的模型：单独指定了就只有它，否则是备选列表 */
+  models: string[]
   effective_effort: string
   /** 正在跑检测（单独检测或全部检测）。 */
   checking: boolean
