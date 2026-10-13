@@ -10,7 +10,6 @@ export type ProgressStage =
   | "login"
   | "balance"
   | "cost"
-  | "subscription"
   | "rates"
   | "done"
   | "error"

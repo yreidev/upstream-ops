@@ -1,7 +1,6 @@
 // Package notify 通知发送统一接口与 Dispatcher。
 //
-// 第一版至少支持 Telegram Bot；同时实现 Webhook / Email / 企业微信 / 钉钉 / 飞书。
-// 每种类型走 ConfigCipher 里的 JSON 字段。
+// 支持 Telegram Bot 与企业微信群机器人，每种类型走 ConfigCipher 里的 JSON 字段。
 package notify
 
 import (
@@ -33,10 +32,6 @@ type Notifier interface {
 	Type() storage.NotificationChannelType
 }
 
-type ProxySetter interface {
-	SetProxy(proxyURL string)
-}
-
 // Factory 用解密后的 JSON 配置构造一个 Notifier。
 type Factory func(rawConfig string) (Notifier, error)
 
@@ -50,6 +45,14 @@ func Register(t storage.NotificationChannelType, f Factory) {
 	mu.Lock()
 	defer mu.Unlock()
 	registry[t] = f
+}
+
+// Supported 判断通知类型是否已注册。
+func Supported(t storage.NotificationChannelType) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	_, ok := registry[t]
+	return ok
 }
 
 // Build 根据存储模型 + 已解密配置构造 Notifier。

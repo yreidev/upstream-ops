@@ -37,12 +37,6 @@ func newTelegram(raw string) (*telegram, error) {
 
 func (t *telegram) Type() storage.NotificationChannelType { return storage.NotifyTelegram }
 
-func (t *telegram) SetProxy(proxyURL string) {
-	if proxyURL != "" {
-		t.http.SetProxy(proxyURL)
-	}
-}
-
 func (t *telegram) Send(ctx context.Context, msg Message) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.cfg.BotToken)
 	text := fmt.Sprintf("*%s*\n%s", msg.Subject, msg.Body)

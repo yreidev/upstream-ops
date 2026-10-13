@@ -200,16 +200,9 @@ func TestChannelListPageTag(t *testing.T) {
 }
 
 // TestChannelListPageTagNonASCIICase 标签只按 ASCII 忽略大小写：Ärger 与 ärger 是两个标签，
-// 在 SQLite 上按其中一个筛选只命中对应的渠道。
-//
-// 只适用于 SQLite：MySQL 的 *_ci 排序规则在 LIKE 时还会折叠非 ASCII 大小写和重音，
-// 两个都会命中（已接受的差异，见 ChannelListFilter），换成其它数据库时跳过。
+// 按其中一个筛选只命中对应的渠道。
 func TestChannelListPageTagNonASCIICase(t *testing.T) {
-	db := openTestDB(t)
-	if !isSQLite(db) {
-		t.Skipf("仅适用于 SQLite，当前为 %s", db.Dialector.Name())
-	}
-	channels := NewChannels(db)
+	channels := NewChannels(openTestDB(t))
 	for _, c := range []Channel{
 		{Name: "upper", Tags: ChannelTags{"Ärger"}},
 		{Name: "lower", Tags: ChannelTags{"ärger"}},
@@ -350,7 +343,7 @@ func TestChannelListPageSortPinyin(t *testing.T) {
 
 	// 与浏览器 localeCompare('zh-CN') 一致：中文在字母之前，按拼音排
 	// （a li ba ba < a li yun < bai du < teng xun < xiao mi）；字母忽略大小写。
-	// SQLite / MySQL 按码点排会得到 小米 < 百度 < 腾讯 < 阿里……
+	// SQLite 按码点排会得到 小米 < 百度 < 腾讯 < 阿里……
 	got, total := listChannelNames(t, channels, 1, -1, ChannelListFilter{Sort: ChannelSortName})
 	assertChannelNames(t, "name asc", got, "阿里巴巴", "阿里云", "百度", "腾讯", "小米", "Alpha", "beta", "Zeta")
 	if total != 8 {

@@ -35,9 +35,6 @@ func registerChannels(g *gin.RouterGroup, d *Deps) {
 	gp.POST("/:id/redeem", func(c *gin.Context) { redeemChannel(c, d) })
 	gp.GET("/:id/recharge-info", func(c *gin.Context) { channelRechargeInfo(c, d) })
 	gp.POST("/:id/recharge", func(c *gin.Context) { createChannelRecharge(c, d) })
-	gp.GET("/:id/subscription-info", func(c *gin.Context) { channelSubscriptionInfo(c, d) })
-	gp.POST("/:id/subscription", func(c *gin.Context) { createChannelSubscription(c, d) })
-	gp.GET("/:id/subscription-usage", func(c *gin.Context) { channelSubscriptionUsage(c, d) })
 	gp.GET("/:id/api-keys/groups", func(c *gin.Context) { listChannelAPIKeyGroups(c, d) })
 	gp.GET("/:id/api-keys", func(c *gin.Context) { listChannelAPIKeys(c, d) })
 	gp.POST("/:id/api-keys", func(c *gin.Context) { createChannelAPIKey(c, d) })
@@ -50,50 +47,46 @@ func registerChannels(g *gin.RouterGroup, d *Deps) {
 }
 
 type channelInput struct {
-	Name                   string                 `json:"name" binding:"required"`
-	Type                   storage.ChannelType    `json:"type" binding:"required"`
-	SiteURL                string                 `json:"site_url" binding:"required"`
-	Username               string                 `json:"username"`
-	SortOrder              int                    `json:"sort_order"`
-	Password               string                 `json:"password"`
-	CredentialMode         storage.CredentialMode `json:"credential_mode"`
-	TokenCredential        string                 `json:"token_credential"` // JSON：token 模式时填写
-	LoginExtraParams       string                 `json:"login_extra_params"`
-	TurnstileEnabled       bool                   `json:"turnstile_enabled"`
-	IgnoreAnnouncements    bool                   `json:"ignore_announcements"`
-	SubscriptionEnabled    bool                   `json:"subscription_enabled"`
-	ProxyEnabled           bool                   `json:"proxy_enabled"`
-	CaptchaConfigID        *uint                  `json:"captcha_config_id"`
-	BalanceThreshold       float64                `json:"balance_threshold"`
-	RechargeMultiplier     *float64               `json:"recharge_multiplier"`
-	RechargeMultiplierMode string                 `json:"recharge_multiplier_mode"`
-	MonitorEnabled         bool                   `json:"monitor_enabled"`
-	OnlyCreatedKeyGroupsEnabled bool             `json:"only_created_key_groups_enabled"`
-	Tags                   []string               `json:"tags"`
-	Notes                  string                 `json:"notes"`
+	Name                        string                 `json:"name" binding:"required"`
+	Type                        storage.ChannelType    `json:"type" binding:"required"`
+	SiteURL                     string                 `json:"site_url" binding:"required"`
+	Username                    string                 `json:"username"`
+	SortOrder                   int                    `json:"sort_order"`
+	Password                    string                 `json:"password"`
+	CredentialMode              storage.CredentialMode `json:"credential_mode"`
+	TokenCredential             string                 `json:"token_credential"` // JSON：token 模式时填写
+	LoginExtraParams            string                 `json:"login_extra_params"`
+	TurnstileEnabled            bool                   `json:"turnstile_enabled"`
+	IgnoreAnnouncements         bool                   `json:"ignore_announcements"`
+	CaptchaConfigID             *uint                  `json:"captcha_config_id"`
+	BalanceThreshold            float64                `json:"balance_threshold"`
+	RechargeMultiplier          *float64               `json:"recharge_multiplier"`
+	RechargeMultiplierMode      string                 `json:"recharge_multiplier_mode"`
+	MonitorEnabled              bool                   `json:"monitor_enabled"`
+	OnlyCreatedKeyGroupsEnabled bool                   `json:"only_created_key_groups_enabled"`
+	Tags                        []string               `json:"tags"`
+	Notes                       string                 `json:"notes"`
 }
 
 type channelUpdateInput struct {
-	Name                   *string                 `json:"name"`
-	SiteURL                *string                 `json:"site_url"`
-	Username               *string                 `json:"username"`
-	SortOrder              *int                    `json:"sort_order"`
-	Password               *string                 `json:"password"`
-	CredentialMode         *storage.CredentialMode `json:"credential_mode"`
-	TokenCredential        *string                 `json:"token_credential"`
-	LoginExtraParams       *string                 `json:"login_extra_params"`
-	TurnstileEnabled       *bool                   `json:"turnstile_enabled"`
-	IgnoreAnnouncements    *bool                   `json:"ignore_announcements"`
-	SubscriptionEnabled    *bool                   `json:"subscription_enabled"`
-	ProxyEnabled           *bool                   `json:"proxy_enabled"`
-	CaptchaConfigID        *uint                   `json:"captcha_config_id"`
-	BalanceThreshold       *float64                `json:"balance_threshold"`
-	RechargeMultiplier     *float64                `json:"recharge_multiplier"`
-	RechargeMultiplierMode *string                 `json:"recharge_multiplier_mode"`
-	MonitorEnabled         *bool                   `json:"monitor_enabled"`
-	OnlyCreatedKeyGroupsEnabled *bool             `json:"only_created_key_groups_enabled"`
-	Tags                   *[]string               `json:"tags"` // 省略或 null 表示不修改，[] 表示清空
-	Notes                  *string                 `json:"notes"`
+	Name                        *string                 `json:"name"`
+	SiteURL                     *string                 `json:"site_url"`
+	Username                    *string                 `json:"username"`
+	SortOrder                   *int                    `json:"sort_order"`
+	Password                    *string                 `json:"password"`
+	CredentialMode              *storage.CredentialMode `json:"credential_mode"`
+	TokenCredential             *string                 `json:"token_credential"`
+	LoginExtraParams            *string                 `json:"login_extra_params"`
+	TurnstileEnabled            *bool                   `json:"turnstile_enabled"`
+	IgnoreAnnouncements         *bool                   `json:"ignore_announcements"`
+	CaptchaConfigID             *uint                   `json:"captcha_config_id"`
+	BalanceThreshold            *float64                `json:"balance_threshold"`
+	RechargeMultiplier          *float64                `json:"recharge_multiplier"`
+	RechargeMultiplierMode      *string                 `json:"recharge_multiplier_mode"`
+	MonitorEnabled              *bool                   `json:"monitor_enabled"`
+	OnlyCreatedKeyGroupsEnabled *bool                   `json:"only_created_key_groups_enabled"`
+	Tags                        *[]string               `json:"tags"` // 省略或 null 表示不修改，[] 表示清空
+	Notes                       *string                 `json:"notes"`
 }
 
 type channelOutput struct {
@@ -109,12 +102,6 @@ type channelRechargeInput struct {
 	Amount        float64 `json:"amount"`
 	PaymentMethod string  `json:"payment_method"`
 	IsMobile      bool    `json:"is_mobile"`
-}
-
-type channelSubscriptionInput struct {
-	PlanID        string `json:"plan_id"`
-	PaymentMethod string `json:"payment_method"`
-	IsMobile      bool   `json:"is_mobile"`
 }
 
 type channelAPIKeyCreateInput = connector.APIKeyCreateRequest
@@ -176,27 +163,25 @@ func createChannel(c *gin.Context, d *Deps) {
 		return
 	}
 	created, err := d.ChannelSvc.Create(channel.CreateInput{
-		Name:                   in.Name,
-		Type:                   in.Type,
-		SiteURL:                in.SiteURL,
-		Username:               in.Username,
-		SortOrder:              in.SortOrder,
-		Password:               in.Password,
-		CredentialMode:         in.CredentialMode,
-		TokenCredential:        in.TokenCredential,
-		LoginExtraParams:       in.LoginExtraParams,
-		TurnstileEnabled:       in.TurnstileEnabled,
-		IgnoreAnnouncements:    in.IgnoreAnnouncements,
-		SubscriptionEnabled:    in.Type == storage.ChannelTypeSub2API && in.SubscriptionEnabled,
-		ProxyEnabled:           in.ProxyEnabled,
-		CaptchaConfigID:        in.CaptchaConfigID,
-		BalanceThreshold:       in.BalanceThreshold,
-		RechargeMultiplier:     in.RechargeMultiplier,
-		RechargeMultiplierMode: in.RechargeMultiplierMode,
-		MonitorEnabled:         in.MonitorEnabled,
+		Name:                        in.Name,
+		Type:                        in.Type,
+		SiteURL:                     in.SiteURL,
+		Username:                    in.Username,
+		SortOrder:                   in.SortOrder,
+		Password:                    in.Password,
+		CredentialMode:              in.CredentialMode,
+		TokenCredential:             in.TokenCredential,
+		LoginExtraParams:            in.LoginExtraParams,
+		TurnstileEnabled:            in.TurnstileEnabled,
+		IgnoreAnnouncements:         in.IgnoreAnnouncements,
+		CaptchaConfigID:             in.CaptchaConfigID,
+		BalanceThreshold:            in.BalanceThreshold,
+		RechargeMultiplier:          in.RechargeMultiplier,
+		RechargeMultiplierMode:      in.RechargeMultiplierMode,
+		MonitorEnabled:              in.MonitorEnabled,
 		OnlyCreatedKeyGroupsEnabled: in.OnlyCreatedKeyGroupsEnabled,
-		Tags:                   tags,
-		Notes:                  notes,
+		Tags:                        tags,
+		Notes:                       notes,
 	})
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err)
@@ -319,37 +304,25 @@ func updateChannel(c *gin.Context, d *Deps) {
 		}
 		notes = &normalized
 	}
-	subscriptionEnabled := in.SubscriptionEnabled
-	if subscriptionEnabled != nil {
-		current, err := d.Channels.FindByID(id)
-		if err != nil {
-			fail(c, http.StatusNotFound, err)
-			return
-		}
-		enabled := current.Type == storage.ChannelTypeSub2API && *subscriptionEnabled
-		subscriptionEnabled = &enabled
-	}
 	updated, err := d.ChannelSvc.Update(id, channel.UpdateInput{
-		Name:                   in.Name,
-		SiteURL:                in.SiteURL,
-		Username:               in.Username,
-		SortOrder:              in.SortOrder,
-		Password:               in.Password,
-		CredentialMode:         in.CredentialMode,
-		TokenCredential:        in.TokenCredential,
-		LoginExtraParams:       in.LoginExtraParams,
-		TurnstileEnabled:       in.TurnstileEnabled,
-		IgnoreAnnouncements:    in.IgnoreAnnouncements,
-		SubscriptionEnabled:    subscriptionEnabled,
-		ProxyEnabled:           in.ProxyEnabled,
-		CaptchaConfigID:        in.CaptchaConfigID,
-		BalanceThreshold:       in.BalanceThreshold,
-		RechargeMultiplier:     in.RechargeMultiplier,
-		RechargeMultiplierMode: in.RechargeMultiplierMode,
-		MonitorEnabled:         in.MonitorEnabled,
+		Name:                        in.Name,
+		SiteURL:                     in.SiteURL,
+		Username:                    in.Username,
+		SortOrder:                   in.SortOrder,
+		Password:                    in.Password,
+		CredentialMode:              in.CredentialMode,
+		TokenCredential:             in.TokenCredential,
+		LoginExtraParams:            in.LoginExtraParams,
+		TurnstileEnabled:            in.TurnstileEnabled,
+		IgnoreAnnouncements:         in.IgnoreAnnouncements,
+		CaptchaConfigID:             in.CaptchaConfigID,
+		BalanceThreshold:            in.BalanceThreshold,
+		RechargeMultiplier:          in.RechargeMultiplier,
+		RechargeMultiplierMode:      in.RechargeMultiplierMode,
+		MonitorEnabled:              in.MonitorEnabled,
 		OnlyCreatedKeyGroupsEnabled: in.OnlyCreatedKeyGroupsEnabled,
-		Tags:                   tags,
-		Notes:                  notes,
+		Tags:                        tags,
+		Notes:                       notes,
 	})
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err)
@@ -532,65 +505,6 @@ func createChannelRecharge(c *gin.Context, d *Deps) {
 	c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
-func channelSubscriptionInfo(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	info, err := d.ChannelSvc.GetSubscriptionInfo(c.Request.Context(), id)
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": info})
-}
-
-func createChannelSubscription(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	var in channelSubscriptionInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	if strings.TrimSpace(in.PlanID) == "" {
-		fail(c, http.StatusBadRequest, fmt.Errorf("请选择订阅套餐"))
-		return
-	}
-	if strings.TrimSpace(in.PaymentMethod) == "" {
-		fail(c, http.StatusBadRequest, fmt.Errorf("请选择支付方式"))
-		return
-	}
-	res, err := d.ChannelSvc.CreateSubscription(c.Request.Context(), id, connector.SubscriptionRequest{
-		PlanID:        in.PlanID,
-		PaymentMethod: in.PaymentMethod,
-		IsMobile:      in.IsMobile,
-	})
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": res})
-}
-
-func channelSubscriptionUsage(c *gin.Context, d *Deps) {
-	id, err := uintParam(c, "id")
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	info, err := d.ChannelSvc.GetSubscriptionUsage(c.Request.Context(), id)
-	if err != nil {
-		fail(c, http.StatusBadRequest, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": info})
-}
-
 func listChannelAPIKeys(c *gin.Context, d *Deps) {
 	id, err := uintParam(c, "id")
 	if err != nil {
@@ -727,7 +641,7 @@ func channelRates(c *gin.Context, d *Deps) {
 	}
 	// ?only_with_keys=1：仅返回"已创建密钥的分组"。
 	// 该参数由前端按渠道开关 channel.only_created_key_groups_enabled 拼接，
-	// 网关 / 通知设置等全量场景不传该参数，仍返回完整 RateSnapshot。
+	// 通知设置等全量场景不传该参数，仍返回完整 RateSnapshot。
 	if onlyWithKeys := c.Query("only_with_keys"); onlyWithKeys == "1" || strings.EqualFold(onlyWithKeys, "true") {
 		set, err := d.ChannelSvc.ListAPIKeyGroupSet(c.Request.Context(), id)
 		if err != nil {
@@ -920,17 +834,13 @@ func syncChannel(c *gin.Context, d *Deps) {
 		total:       1,
 	})
 
-	// 串行执行：先余额，再订阅告警，再倍率。任一步失败仍尝试下一个，但用 done 表示整体状态。
+	// 串行执行：先余额，再倍率。任一步失败仍尝试下一个，但用 done 表示整体状态。
 	balErr := d.Monitor.RefreshBalance(ctx, ch)
-	var subErr error
-	if balErr == nil {
-		subErr = d.Monitor.CheckSubscriptionUsageAlerts(ctx, ch)
-	}
 	rateErr := d.Monitor.RefreshRates(ctx, ch)
 
 	switch {
-	case balErr != nil || subErr != nil || rateErr != nil:
-		progress.Fail(ctx, progress.StageError, joinErrorMessages(balErr, subErr, rateErr))
+	case balErr != nil || rateErr != nil:
+		progress.Fail(ctx, progress.StageError, joinErrorMessages(balErr, rateErr))
 	default:
 		progress.OK(ctx, progress.StageDone, "同步完成")
 	}
@@ -973,15 +883,6 @@ func syncAllChannels(c *gin.Context, d *Deps) {
 			scoped.Emit(progress.Event{
 				Stage:   progress.StageError,
 				Message: fmt.Sprintf("同步失败：%v", err),
-				Time:    time.Now(),
-			})
-			continue
-		}
-		if err := d.Monitor.CheckSubscriptionUsageAlerts(ctx, &ch); err != nil {
-			failedCount++
-			scoped.Emit(progress.Event{
-				Stage:   progress.StageError,
-				Message: fmt.Sprintf("订阅检查失败：%v", err),
 				Time:    time.Now(),
 			})
 			continue

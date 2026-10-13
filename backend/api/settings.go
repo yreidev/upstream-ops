@@ -12,9 +12,7 @@ type settingsConfigView struct {
 	Auth          config.AuthConfig          `json:"auth"`
 	Scheduler     config.SchedulerConfig     `json:"scheduler"`
 	Notifications config.NotificationsConfig `json:"notifications"`
-	Proxy         config.ProxyConfig         `json:"proxy"`
 	Upstream      config.UpstreamConfig      `json:"upstream"`
-	Gateway       config.GatewayConfig       `json:"gateway"`
 }
 
 type settingsConfigInput struct {
@@ -22,9 +20,7 @@ type settingsConfigInput struct {
 	Auth          config.AuthConfig          `json:"auth" binding:"required"`
 	Scheduler     config.SchedulerConfig     `json:"scheduler" binding:"required"`
 	Notifications config.NotificationsConfig `json:"notifications" binding:"required"`
-	Proxy         config.ProxyConfig         `json:"proxy"`
 	Upstream      config.UpstreamConfig      `json:"upstream"`
-	Gateway       config.GatewayConfig       `json:"gateway"`
 }
 
 func registerSettings(g *gin.RouterGroup, d *Deps) {
@@ -32,7 +28,6 @@ func registerSettings(g *gin.RouterGroup, d *Deps) {
 	gs.GET("/config", func(c *gin.Context) { getSettingsConfig(c, d) })
 	gs.PUT("/config", func(c *gin.Context) { saveSettingsConfig(c, d) })
 	gs.POST("/apply", func(c *gin.Context) { applySettingsConfig(c, d) })
-	gs.POST("/proxy/test", func(c *gin.Context) { testProxy(c) })
 }
 
 func getSettingsConfig(c *gin.Context, d *Deps) {
@@ -49,9 +44,7 @@ func getSettingsConfig(c *gin.Context, d *Deps) {
 				Auth:          cfg.Auth,
 				Scheduler:     cfg.Scheduler,
 				Notifications: cfg.Notifications,
-				Proxy:         cfg.Proxy,
 				Upstream:      cfg.Upstream.WithDefaults(),
-				Gateway:       cfg.Gateway.WithDefaults(),
 			},
 		},
 	})
@@ -76,9 +69,7 @@ func saveSettingsConfig(c *gin.Context, d *Deps) {
 	cfg.Auth = in.Auth
 	cfg.Scheduler = in.Scheduler
 	cfg.Notifications = in.Notifications
-	cfg.Proxy = in.Proxy
 	cfg.Upstream = in.Upstream.WithDefaults()
-	cfg.Gateway = in.Gateway.WithDefaults()
 
 	if err := config.Save(path, cfg); err != nil {
 		fail(c, http.StatusInternalServerError, err)

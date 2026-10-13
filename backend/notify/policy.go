@@ -14,15 +14,10 @@ import (
 //   - BalanceLowCooldown：同渠道 balance_low 在窗口内不重复发送
 //   - SendMaxAttempts：单条消息最多发送尝试次数（含首发），<=1 表示不重试
 type Policy struct {
-	NotificationPrefix                       string
-	MinChangePct                             float64
-	BalanceLowCooldown                       time.Duration
-	SubscriptionDailyRemainingThresholdPct   float64
-	SubscriptionWeeklyRemainingThresholdPct  float64
-	SubscriptionMonthlyRemainingThresholdPct float64
-	SubscriptionExpiryThreshold              time.Duration
-	SubscriptionAlertCooldown                time.Duration
-	SendMaxAttempts                          int
+	NotificationPrefix string
+	MinChangePct       float64
+	BalanceLowCooldown time.Duration
+	SendMaxAttempts    int
 }
 
 // CooldownStore Dispatcher 用来判断某个 (channelID, event) 是否还在冷却窗口。

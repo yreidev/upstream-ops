@@ -32,18 +32,6 @@ func (s *apiKeyChannelServiceStub) CreateRecharge(ctx context.Context, channelID
 	return nil, nil
 }
 
-func (s *apiKeyChannelServiceStub) GetSubscriptionInfo(ctx context.Context, channelID uint) (*connector.SubscriptionInfo, error) {
-	return nil, nil
-}
-
-func (s *apiKeyChannelServiceStub) CreateSubscription(ctx context.Context, channelID uint, req connector.SubscriptionRequest) (*connector.SubscriptionLaunch, error) {
-	return nil, nil
-}
-
-func (s *apiKeyChannelServiceStub) GetSubscriptionUsage(ctx context.Context, channelID uint) (*connector.SubscriptionUsageInfo, error) {
-	return nil, nil
-}
-
 func (s *apiKeyChannelServiceStub) ListAPIKeys(ctx context.Context, channelID uint, query connector.APIKeyQuery) (*connector.APIKeyPage, error) {
 	s.lastQuery = query
 	return s.page, nil

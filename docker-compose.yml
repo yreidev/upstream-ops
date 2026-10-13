@@ -2,13 +2,12 @@ name: upstream-ops
 
 services:
   app:
-    image: ghcr.io/bejix/upstream-ops:${IMAGE_TAG:-latest}
+    image: ghcr.io/yreidev/upstream-ops:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["-config", "/app/data/config.yaml"]
     environment:
       TZ: Asia/Shanghai
       SERVER_PORT: 8418
-      DATABASE_DRIVER: sqlite
       DATABASE_PATH: /app/data/upstream-ops.db
       SERVER_MODE: ${SERVER_MODE:-release}
       LOG_LEVEL: ${LOG_LEVEL:-info}

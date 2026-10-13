@@ -34,13 +34,6 @@ func New() *Client {
 	return &Client{http: c}
 }
 
-func (c *Client) SetProxy(proxyURL string) {
-	if strings.TrimSpace(proxyURL) == "" {
-		return
-	}
-	c.http.SetProxy(proxyURL)
-}
-
 func (c *Client) SetHTTPConfig(cfg connector.HTTPConfig) {
 	if cfg.Timeout > 0 {
 		c.http.SetTimeout(cfg.Timeout)
@@ -450,64 +443,6 @@ func (c *Client) GetRechargeInfo(ctx context.Context, ch *connector.Channel, ses
 	}, nil
 }
 
-func (c *Client) GetSubscriptionInfo(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) (*connector.SubscriptionInfo, error) {
-	body, err := c.getJSON(ctx, strings.TrimRight(ch.SiteURL, "/")+"/api/v1/payment/checkout-info", session)
-	if err != nil {
-		return nil, fmt.Errorf("sub2api checkout info: %w", err)
-	}
-	var raw struct {
-		Methods map[string]sub2MethodLimit     `json:"methods"`
-		Plans   []sub2SubscriptionCheckoutPlan `json:"plans"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("sub2api checkout info decode: %w", err)
-	}
-
-	methods := make([]connector.SubscriptionMethod, 0, 2)
-	availableTypes := map[string]bool{}
-	addMethod := func(visibleType, name string) {
-		best, ok := pickVisibleMethodLimit(raw.Methods, visibleType)
-		if !ok || (best.Available != nil && !*best.Available) {
-			return
-		}
-		availableTypes[visibleType] = true
-		methods = append(methods, connector.SubscriptionMethod{
-			Type: visibleType,
-			Name: name,
-		})
-	}
-	addMethod("alipay", "支付宝")
-	addMethod("wxpay", "微信支付")
-
-	plans := make([]connector.SubscriptionPlan, 0, len(raw.Plans))
-	for _, plan := range raw.Plans {
-		if plan.ID <= 0 {
-			continue
-		}
-		paymentMethods := make([]string, 0, len(methods))
-		for _, method := range methods {
-			if availableTypes[method.Type] {
-				paymentMethods = append(paymentMethods, method.Type)
-			}
-		}
-		plans = append(plans, connector.SubscriptionPlan{
-			ID:              strconv.FormatInt(plan.ID, 10),
-			Name:            strings.TrimSpace(plan.Name),
-			Description:     strings.TrimSpace(plan.Description),
-			Price:           plan.Price,
-			Currency:        "CNY",
-			Validity:        formatSub2SubscriptionValidity(plan.ValidityDays, plan.ValidityUnit),
-			GroupName:       strings.TrimSpace(plan.GroupName),
-			DailyLimitUSD:   plan.DailyLimitUSD,
-			WeeklyLimitUSD:  plan.WeeklyLimitUSD,
-			MonthlyLimitUSD: plan.MonthlyLimitUSD,
-			Features:        safeStringSlice(plan.Features),
-			PaymentMethods:  paymentMethods,
-		})
-	}
-	return &connector.SubscriptionInfo{Plans: plans, Methods: methods}, nil
-}
-
 func (c *Client) CreateRecharge(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, req connector.RechargeRequest) (*connector.RechargeLaunch, error) {
 	if req.PaymentMethod != "alipay" && req.PaymentMethod != "wxpay" {
 		return nil, errors.New("sub2api 仅支持 alipay 或 wxpay")
@@ -538,60 +473,6 @@ func (c *Client) CreateRecharge(ctx context.Context, ch *connector.Channel, sess
 		return nil, err
 	}
 	return raw.toLaunch(req.IsMobile)
-}
-
-func (c *Client) CreateSubscription(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, req connector.SubscriptionRequest) (*connector.SubscriptionLaunch, error) {
-	planID, err := strconv.ParseInt(strings.TrimSpace(req.PlanID), 10, 64)
-	if err != nil || planID <= 0 {
-		return nil, errors.New("sub2api 订阅套餐 ID 无效")
-	}
-	method := strings.TrimSpace(req.PaymentMethod)
-	if method != "alipay" && method != "wxpay" {
-		return nil, errors.New("sub2api 订阅仅支持 alipay 或 wxpay")
-	}
-	resp, err := c.http.R().
-		SetContext(ctx).
-		SetHeader("Content-Type", "application/json").
-		SetHeader("Authorization", "Bearer "+session.AccessToken).
-		SetBody(map[string]any{
-			"payment_type":   method,
-			"order_type":     "subscription",
-			"plan_id":        planID,
-			"is_mobile":      req.IsMobile,
-			"payment_source": "hosted_redirect",
-		}).
-		Post(strings.TrimRight(ch.SiteURL, "/") + "/api/v1/payment/orders")
-	if err != nil {
-		return nil, fmt.Errorf("sub2api create subscription http: %w", err)
-	}
-	if resp.IsError() {
-		return nil, fmt.Errorf("sub2api create subscription: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
-	}
-	raw, err := decodeSub2OrderPaymentResult(resp.Body(), "sub2api create subscription")
-	if err != nil {
-		return nil, err
-	}
-	return raw.toLaunch(req.IsMobile)
-}
-
-func (c *Client) GetSubscriptionUsage(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) (*connector.SubscriptionUsageInfo, error) {
-	body, err := c.getJSON(ctx, strings.TrimRight(ch.SiteURL, "/")+"/api/v1/subscriptions/progress", session)
-	if err != nil {
-		return nil, fmt.Errorf("sub2api subscription progress: %w", err)
-	}
-	var raw []sub2SubscriptionProgressItem
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("sub2api subscription progress decode: %w", err)
-	}
-	items := make([]connector.SubscriptionUsage, 0, len(raw))
-	for _, item := range raw {
-		usage := item.toConnector()
-		if usage.ID <= 0 {
-			continue
-		}
-		items = append(items, usage)
-	}
-	return &connector.SubscriptionUsageInfo{Items: items}, nil
 }
 
 func (c *Client) ListAPIKeys(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, query connector.APIKeyQuery) (*connector.APIKeyPage, error) {
@@ -794,22 +675,6 @@ type sub2MethodLimit struct {
 	Available   *bool   `json:"available"`
 }
 
-type sub2SubscriptionCheckoutPlan struct {
-	ID              int64    `json:"id"`
-	GroupID         int64    `json:"group_id"`
-	GroupName       string   `json:"group_name"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	Price           float64  `json:"price"`
-	OriginalPrice   *float64 `json:"original_price"`
-	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
-	ValidityDays    int      `json:"validity_days"`
-	ValidityUnit    string   `json:"validity_unit"`
-	Features        []string `json:"features"`
-}
-
 type sub2OrderPaymentResult struct {
 	PayURL       string          `json:"pay_url"`
 	QRCode       string          `json:"qr_code"`
@@ -822,66 +687,6 @@ type sub2OrderPaymentResult struct {
 	OAuth        json.RawMessage `json:"oauth"`
 	JSAPI        json.RawMessage `json:"jsapi"`
 	JSAPIPayload json.RawMessage `json:"jsapi_payload"`
-}
-
-type sub2SubscriptionProgressItem struct {
-	Subscription sub2UserSubscription   `json:"subscription"`
-	Progress     sub2Progress           `json:"progress"`
-	ID           int64                  `json:"id"`
-	GroupID      int64                  `json:"group_id"`
-	Status       string                 `json:"status"`
-	StartsAt     *time.Time             `json:"starts_at"`
-	ExpiresAt    *time.Time             `json:"expires_at"`
-	DailyStart   *time.Time             `json:"daily_window_start"`
-	WeeklyStart  *time.Time             `json:"weekly_window_start"`
-	MonthlyStart *time.Time             `json:"monthly_window_start"`
-	DailyUsage   float64                `json:"daily_usage_usd"`
-	WeeklyUsage  float64                `json:"weekly_usage_usd"`
-	MonthlyUsage float64                `json:"monthly_usage_usd"`
-	Group        *sub2SubscriptionGroup `json:"group"`
-}
-
-type sub2UserSubscription struct {
-	ID              int64                  `json:"id"`
-	GroupID         int64                  `json:"group_id"`
-	Status          string                 `json:"status"`
-	StartsAt        *time.Time             `json:"starts_at"`
-	ExpiresAt       *time.Time             `json:"expires_at"`
-	DailyStart      *time.Time             `json:"daily_window_start"`
-	WeeklyStart     *time.Time             `json:"weekly_window_start"`
-	MonthlyStart    *time.Time             `json:"monthly_window_start"`
-	DailyUsageUSD   float64                `json:"daily_usage_usd"`
-	WeeklyUsageUSD  float64                `json:"weekly_usage_usd"`
-	MonthlyUsageUSD float64                `json:"monthly_usage_usd"`
-	Group           *sub2SubscriptionGroup `json:"group"`
-}
-
-type sub2SubscriptionGroup struct {
-	ID              int64   `json:"id"`
-	Name            string  `json:"name"`
-	DailyLimitUSD   float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD  float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD float64 `json:"monthly_limit_usd"`
-}
-
-type sub2Progress struct {
-	ID            int64            `json:"id"`
-	GroupName     string           `json:"group_name"`
-	ExpiresAt     *time.Time       `json:"expires_at"`
-	ExpiresInDays int              `json:"expires_in_days"`
-	Daily         *sub2UsageWindow `json:"daily"`
-	Weekly        *sub2UsageWindow `json:"weekly"`
-	Monthly       *sub2UsageWindow `json:"monthly"`
-}
-
-type sub2UsageWindow struct {
-	LimitUSD        float64    `json:"limit_usd"`
-	UsedUSD         float64    `json:"used_usd"`
-	RemainingUSD    float64    `json:"remaining_usd"`
-	Percentage      float64    `json:"percentage"`
-	WindowStart     *time.Time `json:"window_start"`
-	ResetsAt        *time.Time `json:"resets_at"`
-	ResetsInSeconds int64      `json:"resets_in_seconds"`
 }
 
 func pickVisibleMethodLimit(methods map[string]sub2MethodLimit, visibleType string) (sub2MethodLimit, bool) {
@@ -969,169 +774,9 @@ func (r sub2OrderPaymentResult) toLaunch(isMobile bool) (*connector.RechargeLaun
 	return nil, errors.New("sub2api 未返回可用的支付二维码或跳转地址")
 }
 
-func (p sub2SubscriptionProgressItem) toConnector() connector.SubscriptionUsage {
-	if p.Subscription.ID == 0 && p.ID > 0 {
-		return p.directSubscriptionToConnector()
-	}
-	sub := p.Subscription
-	progress := p.Progress
-	groupID := sub.GroupID
-	if groupID == 0 && sub.Group != nil {
-		groupID = sub.Group.ID
-	}
-	groupName := strings.TrimSpace(progress.GroupName)
-	if groupName == "" && sub.Group != nil {
-		groupName = strings.TrimSpace(sub.Group.Name)
-	}
-	expiresAt := progress.ExpiresAt
-	if expiresAt == nil {
-		expiresAt = sub.ExpiresAt
-	}
-	daily := sub2WindowToConnector(progress.Daily)
-	weekly := sub2WindowToConnector(progress.Weekly)
-	monthly := sub2WindowToConnector(progress.Monthly)
-	if sub.Group != nil {
-		if daily == nil {
-			daily = directSubscriptionWindow(sub.Group.DailyLimitUSD, sub.DailyUsageUSD, sub.DailyStart, nil)
-		}
-		if weekly == nil {
-			weekly = directSubscriptionWindow(sub.Group.WeeklyLimitUSD, sub.WeeklyUsageUSD, sub.WeeklyStart, nil)
-		}
-		if monthly == nil {
-			monthly = directSubscriptionWindow(sub.Group.MonthlyLimitUSD, sub.MonthlyUsageUSD, sub.MonthlyStart, nil)
-		}
-	}
-	return connector.SubscriptionUsage{
-		ID:            firstPositiveInt64(progress.ID, sub.ID),
-		GroupID:       groupID,
-		GroupName:     groupName,
-		Status:        strings.TrimSpace(sub.Status),
-		StartsAt:      sub.StartsAt,
-		ExpiresAt:     expiresAt,
-		ExpiresInDays: progress.ExpiresInDays,
-		Daily:         daily,
-		Weekly:        weekly,
-		Monthly:       monthly,
-	}
-}
-
-func (p sub2SubscriptionProgressItem) directSubscriptionToConnector() connector.SubscriptionUsage {
-	groupID := p.GroupID
-	groupName := ""
-	if p.Group != nil {
-		if groupID == 0 {
-			groupID = p.Group.ID
-		}
-		groupName = strings.TrimSpace(p.Group.Name)
-	}
-	var daily, weekly, monthly *connector.SubscriptionUsageWindow
-	if p.Group != nil {
-		daily = directSubscriptionWindow(p.Group.DailyLimitUSD, p.DailyUsage, p.DailyStart, nil)
-		weekly = directSubscriptionWindow(p.Group.WeeklyLimitUSD, p.WeeklyUsage, p.WeeklyStart, nil)
-		monthly = directSubscriptionWindow(p.Group.MonthlyLimitUSD, p.MonthlyUsage, p.MonthlyStart, nil)
-	}
-	return connector.SubscriptionUsage{
-		ID:        p.ID,
-		GroupID:   groupID,
-		GroupName: groupName,
-		Status:    strings.TrimSpace(p.Status),
-		StartsAt:  p.StartsAt,
-		ExpiresAt: p.ExpiresAt,
-		Daily:     daily,
-		Weekly:    weekly,
-		Monthly:   monthly,
-	}
-}
-
-func directSubscriptionWindow(limit, used float64, windowStart, resetsAt *time.Time) *connector.SubscriptionUsageWindow {
-	if limit <= 0 {
-		return nil
-	}
-	if used < 0 {
-		used = 0
-	}
-	remaining := limit - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	usedPct := 0.0
-	if limit > 0 {
-		usedPct = used / limit * 100
-	}
-	if usedPct < 0 {
-		usedPct = 0
-	}
-	if usedPct > 100 {
-		usedPct = 100
-	}
-	return &connector.SubscriptionUsageWindow{
-		LimitUSD:         limit,
-		UsedUSD:          used,
-		RemainingUSD:     remaining,
-		RemainingPercent: 100 - usedPct,
-		UsedPercent:      usedPct,
-		WindowStart:      windowStart,
-		ResetsAt:         resetsAt,
-	}
-}
-
-func sub2WindowToConnector(w *sub2UsageWindow) *connector.SubscriptionUsageWindow {
-	if w == nil || w.LimitUSD <= 0 {
-		return nil
-	}
-	remaining := w.RemainingUSD
-	if remaining < 0 {
-		remaining = 0
-	}
-	usedPct := w.Percentage
-	if usedPct < 0 {
-		usedPct = 0
-	}
-	if usedPct > 100 {
-		usedPct = 100
-	}
-	remainingPct := 100 - usedPct
-	if remainingPct < 0 {
-		remainingPct = 0
-	}
-	if remainingPct > 100 {
-		remainingPct = 100
-	}
-	return &connector.SubscriptionUsageWindow{
-		LimitUSD:         w.LimitUSD,
-		UsedUSD:          w.UsedUSD,
-		RemainingUSD:     remaining,
-		RemainingPercent: remainingPct,
-		UsedPercent:      usedPct,
-		WindowStart:      w.WindowStart,
-		ResetsAt:         w.ResetsAt,
-		ResetsInSeconds:  w.ResetsInSeconds,
-	}
-}
-
-func firstPositiveInt64(values ...int64) int64 {
-	for _, v := range values {
-		if v > 0 {
-			return v
-		}
-	}
-	return 0
-}
-
 func hasJSONValue(raw json.RawMessage) bool {
 	s := strings.TrimSpace(string(raw))
 	return s != "" && s != "null" && s != "{}"
-}
-
-func formatSub2SubscriptionValidity(days int, unit string) string {
-	unit = strings.TrimSpace(unit)
-	if days <= 0 {
-		return unit
-	}
-	if unit == "" || unit == "day" || unit == "days" {
-		return fmt.Sprintf("%d 天", days)
-	}
-	return fmt.Sprintf("%d %s", days, unit)
 }
 
 func round2(v float64) float64 {

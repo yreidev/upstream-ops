@@ -57,10 +57,6 @@ func (s *Service) ScanAllBalances(ctx context.Context) {
 		c := list[i]
 		if err := s.RefreshBalance(ctx, &c); err != nil {
 			s.log.Warn("refresh balance failed", "channel", c.Name, "err", err)
-			continue
-		}
-		if err := s.CheckSubscriptionUsageAlerts(ctx, &c); err != nil {
-			s.log.Warn("check subscription usage failed", "channel", c.Name, "err", err)
 		}
 	}
 }
@@ -206,7 +202,7 @@ func (s *Service) refreshRates(ctx context.Context, c *storage.Channel, batch *n
 	}
 
 	// "仅显示已创建密钥的分组"开关：开关开启时只派发"已挂密钥的分组"的 added/removed/changes
-	// 通知；RateSnapshot 本地存储仍按全量维护，确保网关 / 通知设置等可继续读全分组。
+	// 通知；RateSnapshot 本地存储仍按全量维护，确保通知设置等可继续读全分组。
 	// 拉 set 失败时不做过滤（保险：避免上游密钥接口抖动导致通知被全静音），仅日志告警。
 	var keyGroupSet *channel.APIKeyGroupSet
 	if c.OnlyCreatedKeyGroupsEnabled {
@@ -326,117 +322,6 @@ func (s *Service) refreshRates(ctx context.Context, c *storage.Channel, batch *n
 	return nil
 }
 
-func (s *Service) CheckSubscriptionUsageAlerts(ctx context.Context, c *storage.Channel) error {
-	if c == nil || !c.MonitorEnabled || !c.SubscriptionEnabled || c.Type != storage.ChannelTypeSub2API {
-		return nil
-	}
-	policy := s.dispatcher.Policy()
-	if policy.SubscriptionDailyRemainingThresholdPct <= 0 &&
-		policy.SubscriptionWeeklyRemainingThresholdPct <= 0 &&
-		policy.SubscriptionMonthlyRemainingThresholdPct <= 0 &&
-		policy.SubscriptionExpiryThreshold <= 0 {
-		return nil
-	}
-	info, err := s.channelSvc.GetSubscriptionUsage(ctx, c.ID)
-	if err != nil {
-		progress.Fail(ctx, progress.StageSubscription, err.Error())
-		s.notifyError(ctx, c, storage.EventMonitorFailed, "订阅用量采集失败", err)
-		return err
-	}
-	s.dispatchSubscriptionWindowAlert(ctx, c, storage.EventSubscriptionDailyLow, "每日", policy.SubscriptionDailyRemainingThresholdPct, info.Items, func(item connector.SubscriptionUsage) *connector.SubscriptionUsageWindow {
-		return item.Daily
-	})
-	s.dispatchSubscriptionWindowAlert(ctx, c, storage.EventSubscriptionWeeklyLow, "每周", policy.SubscriptionWeeklyRemainingThresholdPct, info.Items, func(item connector.SubscriptionUsage) *connector.SubscriptionUsageWindow {
-		return item.Weekly
-	})
-	s.dispatchSubscriptionWindowAlert(ctx, c, storage.EventSubscriptionMonthlyLow, "每月", policy.SubscriptionMonthlyRemainingThresholdPct, info.Items, func(item connector.SubscriptionUsage) *connector.SubscriptionUsageWindow {
-		return item.Monthly
-	})
-	s.dispatchSubscriptionExpiryAlert(ctx, c, policy.SubscriptionExpiryThreshold, info.Items)
-	progress.OK(ctx, progress.StageSubscription, fmt.Sprintf("检查订阅用量 %d 项", len(info.Items)),
-		map[string]any{"count": len(info.Items)})
-	return nil
-}
-
-func (s *Service) dispatchSubscriptionWindowAlert(ctx context.Context, c *storage.Channel, event storage.NotificationEvent, label string, threshold float64, items []connector.SubscriptionUsage, pick func(connector.SubscriptionUsage) *connector.SubscriptionUsageWindow) {
-	if threshold <= 0 {
-		return
-	}
-	lines := make([]string, 0)
-	for _, item := range items {
-		w := pick(item)
-		if w == nil || w.LimitUSD <= 0 || w.RemainingPercent > threshold {
-			continue
-		}
-		reset := "—"
-		if w.ResetsAt != nil && !w.ResetsAt.IsZero() {
-			reset = w.ResetsAt.Format("01-02 15:04")
-		}
-		lines = append(lines, fmt.Sprintf("· %s：已用 $%.4f / $%.4f，剩余 $%.4f（%.1f%%），重置 %s",
-			subscriptionGroupName(item), w.UsedUSD, w.LimitUSD, w.RemainingUSD, w.RemainingPercent, reset))
-	}
-	if len(lines) == 0 {
-		return
-	}
-	body := fmt.Sprintf("渠道：%s\n维度：%s\n阈值：剩余 %.1f%%\n%s", c.Name, label, threshold, strings.Join(lines, "\n"))
-	_ = s.dispatcher.Dispatch(ctx, notify.Message{
-		Event:     event,
-		ChannelID: c.ID,
-		Subject:   fmt.Sprintf("%s 订阅%s剩余额度不足", c.Name, label),
-		Body:      body,
-	})
-}
-
-func (s *Service) dispatchSubscriptionExpiryAlert(ctx context.Context, c *storage.Channel, threshold time.Duration, items []connector.SubscriptionUsage) {
-	if threshold <= 0 {
-		return
-	}
-	now := time.Now()
-	lines := make([]string, 0)
-	for _, item := range items {
-		if item.ExpiresAt == nil || item.ExpiresAt.IsZero() {
-			continue
-		}
-		remaining := item.ExpiresAt.Sub(now)
-		if remaining > threshold {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("· %s：到期 %s，剩余 %s",
-			subscriptionGroupName(item), item.ExpiresAt.Format("2006-01-02 15:04"), formatDurationHours(remaining)))
-	}
-	if len(lines) == 0 {
-		return
-	}
-	body := fmt.Sprintf("渠道：%s\n类型：订阅即将到期\n阈值：剩余 %.0f 小时\n%s", c.Name, threshold.Hours(), strings.Join(lines, "\n"))
-	_ = s.dispatcher.Dispatch(ctx, notify.Message{
-		Event:     storage.EventSubscriptionExpiring,
-		ChannelID: c.ID,
-		Subject:   fmt.Sprintf("%s 订阅即将到期", c.Name),
-		Body:      body,
-	})
-}
-
-func subscriptionGroupName(item connector.SubscriptionUsage) string {
-	if strings.TrimSpace(item.GroupName) != "" {
-		return strings.TrimSpace(item.GroupName)
-	}
-	if item.GroupID > 0 {
-		return fmt.Sprintf("分组 %d", item.GroupID)
-	}
-	return fmt.Sprintf("订阅 %d", item.ID)
-}
-
-func formatDurationHours(d time.Duration) string {
-	if d <= 0 {
-		return "已到期"
-	}
-	hours := d.Hours()
-	if hours < 1 {
-		return fmt.Sprintf("%.0f 分钟", d.Minutes())
-	}
-	return fmt.Sprintf("%.1f 小时", hours)
-}
-
 func (s *Service) prepare(ctx context.Context, c *storage.Channel) (*connector.Channel, connector.Connector, *connector.AuthSession, error) {
 	resolved, err := s.channelSvc.Resolve(ctx, c)
 	if err != nil {
@@ -447,7 +332,6 @@ func (s *Service) prepare(ctx context.Context, c *storage.Channel) (*connector.C
 		return nil, nil, nil, err
 	}
 	s.channelSvc.ApplyHTTPConfig(conn)
-	s.channelSvc.ApplyProxy(conn, resolved)
 	session, err := s.channelSvc.EnsureSession(ctx, c, resolved, conn)
 	if err != nil {
 		return nil, nil, nil, err

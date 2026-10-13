@@ -13,15 +13,14 @@ import (
 type Stage string
 
 const (
-	StageCaptcha      Stage = "captcha"
-	StageLogin        Stage = "login"
-	StageSession      Stage = "session"
-	StageBalance      Stage = "balance"
-	StageCost         Stage = "cost"
-	StageSubscription Stage = "subscription"
-	StageRates        Stage = "rates"
-	StageDone         Stage = "done"
-	StageError        Stage = "error"
+	StageCaptcha Stage = "captcha"
+	StageLogin   Stage = "login"
+	StageSession Stage = "session"
+	StageBalance Stage = "balance"
+	StageCost    Stage = "cost"
+	StageRates   Stage = "rates"
+	StageDone    Stage = "done"
+	StageError   Stage = "error"
 )
 
 // Event 一条进度事件。OK 三态：nil = 进行中，true = 成功，false = 失败。

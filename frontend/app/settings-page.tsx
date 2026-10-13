@@ -5,7 +5,6 @@ import {
   Clock3,
   MonitorCog,
   KeyRound,
-  Network,
   PencilLine,
   Plus,
   RefreshCw,
@@ -13,20 +12,12 @@ import {
   Server,
   ShieldCheck,
   Trash2,
-  Workflow,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -41,7 +32,6 @@ import type {
   NotificationChannel,
   NotificationChannelType,
   SystemConfig,
-  SystemGatewayConfig,
 } from "@/lib/api-types";
 import { decimal, money, relativeTime } from "@/lib/format";
 import {
@@ -57,44 +47,6 @@ function num(v: string) {
   return Number(v || 0);
 }
 
-const defaultGatewayConfig: SystemGatewayConfig = {
-  tempPauseSeconds: 30,
-  forwardTimeoutSeconds: 600,
-  modelsCacheTTLSeconds: 60,
-  maxFailoverSwitches: 8,
-  routeBatchConcurrency: 8,
-  usageErrorBodyBytes: 32768,
-  usageErrorMsgRunes: 500,
-  usageErrorHeaderValueRunes: 8192,
-  usageErrorHeadersJSONBytes: 65536,
-  streamKeepaliveSeconds: 15,
-  streamIdleTimeoutSeconds: 120,
-  streamMaxLineBytes: 8 * 1024 * 1024,
-};
-
-function patchGateway(
-  prev: SystemConfig | null,
-  key: keyof SystemGatewayConfig,
-  value: number,
-): SystemConfig | null {
-  if (!prev) return prev;
-  return {
-    ...prev,
-    gateway: {
-      ...(prev.gateway ?? defaultGatewayConfig),
-      [key]: value,
-    },
-  };
-}
-
-interface ProxyTestResult {
-  ok: boolean;
-  latency_ms: number;
-  ip: string;
-  provider: string;
-  error?: string;
-}
-
 export default function SettingsPage() {
   const query = useSystemConfig();
   const notifications = useNotificationChannels();
@@ -107,7 +59,6 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
   const [configSavedPendingApply, setConfigSavedPendingApply] = useState(false);
-  const [testingProxy, setTestingProxy] = useState(false);
   const [checkingVersion, setCheckingVersion] = useState(false);
   const [editingNotification, setEditingNotification] =
     useState<NotificationChannel | null>(null);
@@ -125,11 +76,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (query.data?.config) {
-      const cfg = query.data.config;
-      setForm({
-        ...cfg,
-        gateway: { ...defaultGatewayConfig, ...(cfg.gateway ?? {}) },
-      });
+      setForm(query.data.config);
     }
   }, [query.data]);
 
@@ -276,31 +223,10 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleTestProxy() {
-    setTestingProxy(true);
-    try {
-      const result = await apiFetch<ProxyTestResult>("/settings/proxy/test", {
-        method: "POST",
-        body: JSON.stringify(form?.proxy ?? {}),
-      });
-      if (result.ok) {
-        toast.success(
-          `代理可用，出口 IP ${result.ip}，延迟 ${result.latency_ms}ms`,
-        );
-      } else {
-        toast.error(result.error ?? "代理测试失败");
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "代理测试失败");
-    } finally {
-      setTestingProxy(false);
-    }
-  }
-
   async function handleCheckVersion() {
     setCheckingVersion(true);
     try {
-      const result = await apiFetch<AppVersion>("/version?force=1");
+      const result = await apiFetch<AppVersion>("/version");
       setVersionInfo(result);
       appVersion.setData(result);
       if (result.update_error) {
@@ -774,119 +700,6 @@ export default function SettingsPage() {
                 />
               </Field>
               <Field
-                label="每日剩余提醒百分比"
-                description="Sub2API 订阅每日剩余额度低于该百分比时提醒，0 为关闭。"
-              >
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={String(form.notifications.subscriptionDailyRemainingThresholdPct)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              subscriptionDailyRemainingThresholdPct: Number(e.target.value || 0),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="每周剩余提醒百分比"
-                description="Sub2API 订阅每周剩余额度低于该百分比时提醒，0 为关闭。"
-              >
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={String(form.notifications.subscriptionWeeklyRemainingThresholdPct)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              subscriptionWeeklyRemainingThresholdPct: Number(e.target.value || 0),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="每月剩余提醒百分比"
-                description="Sub2API 订阅每月剩余额度低于该百分比时提醒，0 为关闭。"
-              >
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={String(form.notifications.subscriptionMonthlyRemainingThresholdPct)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              subscriptionMonthlyRemainingThresholdPct: Number(e.target.value || 0),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="订阅到期提醒小时"
-                description="Sub2API 订阅剩余小时数低于该值时提醒，0 为关闭。"
-              >
-                <Input
-                  type="number"
-                  value={String(form.notifications.subscriptionExpiryThresholdHours)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              subscriptionExpiryThresholdHours: num(e.target.value),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="订阅提醒冷却分钟"
-                description="同一渠道同一类订阅提醒的冷却时间。"
-              >
-                <Input
-                  type="number"
-                  value={String(form.notifications.subscriptionAlertCooldownMinutes)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              subscriptionAlertCooldownMinutes: num(e.target.value),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
                 label="通知最大重试次数"
                 description="发送失败后的最大尝试次数。"
               >
@@ -959,352 +772,6 @@ export default function SettingsPage() {
             </div>
           </SectionCard>
 
-          <SectionCard
-            icon={<Workflow className="size-4 text-violet-600" />}
-            title="网关运行时"
-            description="AI 网关转发、批量运维与用量错误落库截断。保存后点「应用配置」立即生效。"
-          >
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <Field
-                label="转发超时（秒）"
-                description={`单次上游转发/流式 drain 超时，默认 ${defaultGatewayConfig.forwardTimeoutSeconds}。`}
-              >
-                <Input
-                  type="number"
-                  min={1}
-                  value={String(form.gateway?.forwardTimeoutSeconds ?? defaultGatewayConfig.forwardTimeoutSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "forwardTimeoutSeconds", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="流保活间隔（秒）"
-                description={`已提交 SSE 流的下游保活间隔，默认 ${defaultGatewayConfig.streamKeepaliveSeconds}。`}
-              >
-                <Input
-                  type="number"
-                  min={1}
-                  value={String(form.gateway?.streamKeepaliveSeconds ?? defaultGatewayConfig.streamKeepaliveSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "streamKeepaliveSeconds", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="流空闲超时（秒）"
-                description={`上游 SSE 在收到数据后允许的最长空闲时间，默认 ${defaultGatewayConfig.streamIdleTimeoutSeconds}。`}
-              >
-                <Input
-                  type="number"
-                  min={1}
-                  value={String(form.gateway?.streamIdleTimeoutSeconds ?? defaultGatewayConfig.streamIdleTimeoutSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "streamIdleTimeoutSeconds", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="SSE 单行上限（字节）"
-                description={`上游单条 SSE 行最大长度，默认 ${defaultGatewayConfig.streamMaxLineBytes}。`}
-              >
-                <Input
-                  type="number"
-                  min={65536}
-                  value={String(form.gateway?.streamMaxLineBytes ?? defaultGatewayConfig.streamMaxLineBytes)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "streamMaxLineBytes", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="新建组默认冷却（秒）"
-                description={`创建网关组时默认临时暂停时长，默认 ${defaultGatewayConfig.tempPauseSeconds}。`}
-              >
-                <Input
-                  type="number"
-                  min={0}
-                  value={String(form.gateway?.tempPauseSeconds ?? defaultGatewayConfig.tempPauseSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "tempPauseSeconds", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="新建组默认顺延次数"
-                description={`创建组时默认最大 failover 切换次数，默认 ${defaultGatewayConfig.maxFailoverSwitches}。`}
-              >
-                <Input
-                  type="number"
-                  min={0}
-                  max={32}
-                  value={String(form.gateway?.maxFailoverSwitches ?? defaultGatewayConfig.maxFailoverSwitches)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "maxFailoverSwitches", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="模型列表缓存 TTL（秒）"
-                description={`公开 /v1/models 缓存时间，默认 ${defaultGatewayConfig.modelsCacheTTLSeconds}。`}
-              >
-                <Input
-                  type="number"
-                  min={0}
-                  value={String(form.gateway?.modelsCacheTTLSeconds ?? defaultGatewayConfig.modelsCacheTTLSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "modelsCacheTTLSeconds", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="批量运维并发"
-                description={`测试模型 / 确保密钥 / 同步模型 / 拉源分组并发上限，默认 ${defaultGatewayConfig.routeBatchConcurrency}，最大 64。`}
-              >
-                <Input
-                  type="number"
-                  min={1}
-                  max={64}
-                  value={String(form.gateway?.routeBatchConcurrency ?? defaultGatewayConfig.routeBatchConcurrency)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "routeBatchConcurrency", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="错误体落库上限（字节）"
-                description={`用量错误响应体截断，默认 ${defaultGatewayConfig.usageErrorBodyBytes}。`}
-              >
-                <Input
-                  type="number"
-                  min={1024}
-                  value={String(form.gateway?.usageErrorBodyBytes ?? defaultGatewayConfig.usageErrorBodyBytes)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "usageErrorBodyBytes", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="错误摘要上限（字符）"
-                description={`用量 error_message 截断，默认 ${defaultGatewayConfig.usageErrorMsgRunes}。`}
-              >
-                <Input
-                  type="number"
-                  min={64}
-                  value={String(form.gateway?.usageErrorMsgRunes ?? defaultGatewayConfig.usageErrorMsgRunes)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "usageErrorMsgRunes", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="单头值上限（字符）"
-                description={`上游响应头单值截断，默认 ${defaultGatewayConfig.usageErrorHeaderValueRunes}。`}
-              >
-                <Input
-                  type="number"
-                  min={256}
-                  value={String(
-                    form.gateway?.usageErrorHeaderValueRunes ??
-                      defaultGatewayConfig.usageErrorHeaderValueRunes,
-                  )}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "usageErrorHeaderValueRunes", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="响应头 JSON 上限（字节）"
-                description={`上游响应头整段 JSON 截断，默认 ${defaultGatewayConfig.usageErrorHeadersJSONBytes}。`}
-              >
-                <Input
-                  type="number"
-                  min={1024}
-                  value={String(
-                    form.gateway?.usageErrorHeadersJSONBytes ??
-                      defaultGatewayConfig.usageErrorHeadersJSONBytes,
-                  )}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      patchGateway(prev, "usageErrorHeadersJSONBytes", num(e.target.value)),
-                    )
-                  }
-                />
-              </Field>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            icon={<Network className="size-4 text-cyan-600" />}
-            title="代理 IP"
-            description="配置渠道上游请求使用的全局代理。只有渠道里开启代理 IP 的账号会使用这里的配置。"
-            action={
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-border bg-background"
-                onClick={handleTestProxy}
-                disabled={testingProxy}
-              >
-                <RefreshCw
-                  className={cn("size-3.5", testingProxy ? "animate-spin" : "")}
-                />
-                {testingProxy ? "测试中..." : "测试代理"}
-              </Button>
-            }
-          >
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <InlineSwitch
-                id="proxy-enabled"
-                label="启用全局代理"
-                description="关闭后所有已勾选代理 IP 的对象也会保持直连。"
-                checked={form.proxy.enabled}
-                onCheckedChange={(checked) =>
-                  setForm((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          proxy: { ...prev.proxy, enabled: checked },
-                        }
-                      : prev,
-                  )
-                }
-              />
-              <InlineSwitch
-                id="proxy-version-check"
-                label="检测更新走代理"
-                description="开启后顶部自动检测更新和这里的检测更新会使用代理。"
-                checked={form.proxy.versionCheckEnabled}
-                onCheckedChange={(checked) =>
-                  setForm((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          proxy: {
-                            ...prev.proxy,
-                            versionCheckEnabled: checked,
-                          },
-                        }
-                      : prev,
-                  )
-                }
-              />
-              <Field label="协议" description="支持 HTTP、HTTPS 和 SOCKS5。">
-                <Select
-                  value={form.proxy.protocol}
-                  onValueChange={(value) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            proxy: {
-                              ...prev.proxy,
-                              protocol: value as "http" | "https" | "socks5",
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="http">HTTP</SelectItem>
-                    <SelectItem value="https">HTTPS</SelectItem>
-                    <SelectItem value="socks5">SOCKS5</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="主机" description="代理服务器地址，不含协议。">
-                <Input
-                  value={form.proxy.host}
-                  placeholder="127.0.0.1"
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            proxy: { ...prev.proxy, host: e.target.value },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field label="端口" description="代理服务监听端口。">
-                <Input
-                  type="number"
-                  value={String(form.proxy.port || "")}
-                  placeholder="7890"
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            proxy: { ...prev.proxy, port: num(e.target.value) },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field label="账号（可选）" description="代理认证用户名。">
-                <Input
-                  value={form.proxy.username}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            proxy: { ...prev.proxy, username: e.target.value },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field label="密码（可选）" description="代理认证密码。">
-                <Input
-                  type="password"
-                  value={form.proxy.password}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            proxy: { ...prev.proxy, password: e.target.value },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-            </div>
-          </SectionCard>
-
           <div className="flex flex-wrap items-center gap-3 border-t border-border pt-5">
             <Button onClick={handleSave} disabled={saving || applying}>
               {saving ? "保存中..." : "保存"}
@@ -1326,7 +793,7 @@ export default function SettingsPage() {
             >
               {configSavedPendingApply
                 ? "配置已保存但尚未应用，点击应用后才会立即生效。"
-                : "保存写入配置文件，应用让鉴权、调度、通知策略、代理和上游请求配置立即更新。"}
+                : "保存写入配置文件，应用让鉴权、调度、通知策略和上游请求配置立即更新。"}
             </span>
           </div>
             </CardContent>
@@ -1337,7 +804,7 @@ export default function SettingsPage() {
           <SectionCard
             icon={<Send className="size-4 text-violet-600" />}
             title="通知渠道"
-            description="管理 Telegram、Webhook、邮件、企业微信、钉钉、飞书等通知出口。"
+            description="管理 Telegram、企业微信通知出口。"
             action={
               <Button
                 size="sm"
@@ -1419,14 +886,6 @@ export default function SettingsPage() {
                               >
                                 {channel.enabled ? "启用中" : "已禁用"}
                               </Badge>
-                              {channel.proxy_enabled ? (
-                                <Badge
-                                  variant="outline"
-                                  className="border-transparent bg-cyan-50 text-cyan-700"
-                                >
-                                  代理 IP
-                                </Badge>
-                              ) : null}
                             </div>
                             <p className="text-xs text-muted-foreground">
                               {subCount === 0
@@ -1509,7 +968,7 @@ export default function SettingsPage() {
             ) : !captchas.data || captchas.data.length === 0 ? (
               <EmptyPanel
                 title="还没有验证码服务"
-                description="如果某些渠道登录需要 Turnstile 验证，在这里接入 CapSolver、2Captcha 等服务。"
+                description="如果某些渠道登录需要 Turnstile 验证，在这里接入 YesCaptcha。"
               />
             ) : (
               <div className="space-y-3">
@@ -1541,14 +1000,6 @@ export default function SettingsPage() {
                           >
                             {item.enabled ? "启用中" : "已禁用"}
                           </Badge>
-                          {item.proxy_enabled ? (
-                            <Badge
-                              variant="outline"
-                              className="border-transparent bg-cyan-50 text-cyan-700"
-                            >
-                              代理 IP
-                            </Badge>
-                          ) : null}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {item.endpoint
@@ -1792,21 +1243,13 @@ function EmptyLine({ text }: { text: string }) {
 function typeLabel(type: NotificationChannelType) {
   const map: Record<NotificationChannelType, string> = {
     telegram: "Telegram",
-    webhook: "Webhook",
-    email: "邮件",
     wecom: "企业微信",
-    dingtalk: "钉钉",
-    feishu: "飞书",
-    serverchan3: "Server酱³",
   };
   return map[type] ?? type;
 }
 
 function captchaLabel(type: CaptchaConfig["type"]) {
   const map: Record<CaptchaConfig["type"], string> = {
-    capsolver: "CapSolver",
-    "2captcha": "2Captcha",
-    anticaptcha: "AntiCaptcha",
     yescaptcha: "YesCaptcha",
   };
   return map[type] ?? type;
@@ -1821,12 +1264,7 @@ function formatCaptchaBalance(item: CaptchaConfig) {
 function notifyIcon(type: NotificationChannelType) {
   const map: Partial<Record<NotificationChannelType, typeof Send>> = {
     telegram: Send,
-    webhook: Send,
-    email: Send,
     wecom: Send,
-    dingtalk: Send,
-    feishu: Send,
-    serverchan3: Send,
   };
   return map[type] ?? Send;
 }

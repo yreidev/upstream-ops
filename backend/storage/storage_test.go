@@ -13,12 +13,7 @@ import (
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := Open(DBConfig{
-		Driver:       DBDriverSQLite,
-		Path:         filepath.Join(t.TempDir(), "test.db"),
-		MaxOpenConns: 20,
-		MaxIdleConns: 5,
-	})
+	db, err := Open(DBConfig{Path: filepath.Join(t.TempDir(), "test.db")})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
@@ -80,72 +75,6 @@ func TestAggregateBalanceTrend(t *testing.T) {
 		if got[i].Balance != want[i].Balance {
 			t.Fatalf("balance %d mismatch: got %v want %v", i, got[i].Balance, want[i].Balance)
 		}
-	}
-}
-
-func TestChannelProxyEnabledPersists(t *testing.T) {
-	db := openTestDB(t)
-	channels := NewChannels(db)
-	ch := &Channel{
-		Name:           "proxy-channel",
-		Type:           ChannelTypeNewAPI,
-		SiteURL:        "https://example.com",
-		Username:       "u",
-		PasswordCipher: "x",
-		ProxyEnabled:   true,
-		MonitorEnabled: true,
-	}
-	if err := channels.Create(ch); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-	got, err := channels.FindByID(ch.ID)
-	if err != nil {
-		t.Fatalf("find channel: %v", err)
-	}
-	if !got.ProxyEnabled {
-		t.Fatal("proxy_enabled = false, want true")
-	}
-}
-
-func TestProxyEnabledPersistsForCaptchaAndNotification(t *testing.T) {
-	db := openTestDB(t)
-
-	captchas := NewCaptchas(db)
-	cfg := &CaptchaConfig{
-		Name:         "solver-proxy",
-		Type:         CaptchaCapSolver,
-		APIKeyCipher: "x",
-		Enabled:      true,
-		ProxyEnabled: true,
-	}
-	if err := captchas.Create(cfg); err != nil {
-		t.Fatalf("create captcha: %v", err)
-	}
-	gotCaptcha, err := captchas.FindByID(cfg.ID)
-	if err != nil {
-		t.Fatalf("find captcha: %v", err)
-	}
-	if !gotCaptcha.ProxyEnabled {
-		t.Fatal("captcha proxy_enabled = false, want true")
-	}
-
-	notifies := NewNotifications(db)
-	notify := &NotificationChannel{
-		Name:         "notify-proxy",
-		Type:         NotifyTelegram,
-		ConfigCipher: "x",
-		Enabled:      true,
-		ProxyEnabled: true,
-	}
-	if err := notifies.CreateChannel(notify); err != nil {
-		t.Fatalf("create notification: %v", err)
-	}
-	gotNotify, err := notifies.FindChannel(notify.ID)
-	if err != nil {
-		t.Fatalf("find notification: %v", err)
-	}
-	if !gotNotify.ProxyEnabled {
-		t.Fatal("notification proxy_enabled = false, want true")
 	}
 }
 
@@ -768,7 +697,7 @@ func TestHardDeleteAllowsReusingNames(t *testing.T) {
 	captchas := NewCaptchas(db)
 	cfg := &CaptchaConfig{
 		Name:         "solver",
-		Type:         CaptchaCapSolver,
+		Type:         CaptchaYesCaptcha,
 		APIKeyCipher: "x",
 		Enabled:      true,
 	}
@@ -780,7 +709,7 @@ func TestHardDeleteAllowsReusingNames(t *testing.T) {
 	}
 	cfg = &CaptchaConfig{
 		Name:         "solver",
-		Type:         CaptchaCapSolver,
+		Type:         CaptchaYesCaptcha,
 		APIKeyCipher: "x",
 		Enabled:      true,
 	}
@@ -935,8 +864,8 @@ func TestAutoMigrateDropsDeletedAtColumns(t *testing.T) {
 		t.Fatalf("mark deleted channel: %v", err)
 	}
 
-	activeCaptcha := &CaptchaConfig{Name: "active-captcha", Type: CaptchaCapSolver, APIKeyCipher: "x", Enabled: true}
-	deletedCaptcha := &CaptchaConfig{Name: "deleted-captcha", Type: CaptchaCapSolver, APIKeyCipher: "x", Enabled: true}
+	activeCaptcha := &CaptchaConfig{Name: "active-captcha", Type: CaptchaYesCaptcha, APIKeyCipher: "x", Enabled: true}
+	deletedCaptcha := &CaptchaConfig{Name: "deleted-captcha", Type: CaptchaYesCaptcha, APIKeyCipher: "x", Enabled: true}
 	if err := db.Create(activeCaptcha).Error; err != nil {
 		t.Fatalf("create active captcha: %v", err)
 	}
@@ -1016,239 +945,102 @@ func TestAutoMigrateDropsObsoleteRateSiteColumns(t *testing.T) {
 	}
 }
 
-func TestGatewayGroupsReorderAndListOrder(t *testing.T) {
+func TestAutoMigrateDropsRemovedFeatureState(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewGatewayGroups(db)
-
-	a := &GatewayGroup{Name: "a", Status: GatewayGroupStatusActive}
-	b := &GatewayGroup{Name: "b", Status: GatewayGroupStatusActive}
-	c := &GatewayGroup{Name: "c", Status: GatewayGroupStatusActive}
-	for _, g := range []*GatewayGroup{a, b, c} {
-		pos, err := repo.NextPosition()
-		if err != nil {
-			t.Fatalf("next pos: %v", err)
+	stmts := []string{
+		"CREATE TABLE gateway_groups (id integer PRIMARY KEY)",
+		"CREATE TABLE gateway_keys (id integer PRIMARY KEY)",
+		"CREATE TABLE gateway_routes (id integer PRIMARY KEY)",
+		"CREATE TABLE gateway_providers (id integer PRIMARY KEY)",
+		"CREATE TABLE gateway_usage_logs (id integer PRIMARY KEY)",
+		"CREATE TABLE model_price_overrides (id integer PRIMARY KEY)",
+		"ALTER TABLE channels ADD COLUMN subscription_enabled numeric DEFAULT false",
+		"ALTER TABLE channels ADD COLUMN proxy_enabled numeric DEFAULT false",
+		"ALTER TABLE captcha_configs ADD COLUMN proxy_enabled numeric DEFAULT false",
+		"ALTER TABLE notification_channels ADD COLUMN proxy_enabled numeric DEFAULT false",
+	}
+	for _, stmt := range stmts {
+		if err := db.Exec(stmt).Error; err != nil {
+			t.Fatalf("%s: %v", stmt, err)
 		}
-		g.Position = pos
-		if err := repo.Create(g); err != nil {
-			t.Fatalf("create %s: %v", g.Name, err)
+	}
+	keep := []NotificationChannel{
+		{Name: "tg", Type: NotifyTelegram, ConfigCipher: "x", Enabled: true},
+		{Name: "wecom", Type: NotifyWecom, ConfigCipher: "x", Enabled: true},
+	}
+	for i := range keep {
+		if err := db.Create(&keep[i]).Error; err != nil {
+			t.Fatalf("create %s: %v", keep[i].Name, err)
+		}
+	}
+	for _, typ := range []string{"webhook", "email", "dingtalk", "feishu", "serverchan3"} {
+		if err := db.Create(&NotificationChannel{Name: typ, Type: NotificationChannelType(typ), ConfigCipher: "x", Enabled: true}).Error; err != nil {
+			t.Fatalf("create %s: %v", typ, err)
+		}
+	}
+	yes := &CaptchaConfig{Name: "yes", Type: CaptchaYesCaptcha, APIKeyCipher: "x", Enabled: true}
+	removed := &CaptchaConfig{Name: "capsolver", Type: CaptchaProviderType("capsolver"), APIKeyCipher: "x", Enabled: true}
+	for _, cfg := range []*CaptchaConfig{yes, removed} {
+		if err := db.Create(cfg).Error; err != nil {
+			t.Fatalf("create captcha %s: %v", cfg.Name, err)
+		}
+	}
+	keepBinding := &Channel{Name: "keep-binding", Type: ChannelTypeNewAPI, SiteURL: "https://a.example", PasswordCipher: "x", CaptchaConfigID: &yes.ID}
+	dropBinding := &Channel{Name: "drop-binding", Type: ChannelTypeNewAPI, SiteURL: "https://b.example", PasswordCipher: "x", CaptchaConfigID: &removed.ID}
+	for _, ch := range []*Channel{keepBinding, dropBinding} {
+		if err := db.Create(ch).Error; err != nil {
+			t.Fatalf("create channel %s: %v", ch.Name, err)
 		}
 	}
 
-	// 创建顺序 a,b,c → position 0,1,2；列表应为 a,b,c
-	list, err := repo.List()
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(list) != 3 || list[0].Name != "a" || list[1].Name != "b" || list[2].Name != "c" {
-		t.Fatalf("initial order = %v %v %v", list[0].Name, list[1].Name, list[2].Name)
-	}
-
-	// 重排为 c, a, b
-	if err := repo.Reorder([]uint{c.ID, a.ID, b.ID}); err != nil {
-		t.Fatalf("reorder: %v", err)
-	}
-	list, err = repo.List()
-	if err != nil {
-		t.Fatalf("list after reorder: %v", err)
-	}
-	if list[0].Name != "c" || list[1].Name != "a" || list[2].Name != "b" {
-		t.Fatalf("reordered = %v %v %v", list[0].Name, list[1].Name, list[2].Name)
-	}
-	if list[0].Position != 0 || list[1].Position != 1 || list[2].Position != 2 {
-		t.Fatalf("positions = %d %d %d", list[0].Position, list[1].Position, list[2].Position)
-	}
-}
-
-func TestGatewayRoutesSaveForGroupPreservesID(t *testing.T) {
-	db, err := Open(DBConfig{
-		Driver:       DBDriverSQLite,
-		Path:         filepath.Join(t.TempDir(), "gw-route-preserve.db"),
-		MaxOpenConns: 5,
-		MaxIdleConns: 2,
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("sql db: %v", err)
-	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := AutoMigrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
+		t.Fatalf("auto migrate: %v", err)
 	}
 
-	routes := NewGatewayRoutes(db)
-	if err := routes.SaveForGroup(7, []GatewayRoute{
-		{SourceChannelID: 1, Weight: 1, Enabled: true},
-		{SourceChannelID: 2, Weight: 2, Enabled: true},
-	}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	first, err := routes.ListByGroupID(7)
-	if err != nil || len(first) != 2 {
-		t.Fatalf("list first: %v len=%d", err, len(first))
-	}
-	id0, id1 := first[0].ID, first[1].ID
-	if id0 == 0 || id1 == 0 {
-		t.Fatalf("ids zero: %+v", first)
-	}
-	// 模拟 ensure-keys 写入上游密钥
-	if err := routes.UpdateSourceKey(id0, 41, "upstream-ops-gw-g7-r1", "cipher-a"); err != nil {
-		t.Fatalf("key0: %v", err)
-	}
-	if err := routes.UpdateSourceKey(id1, 42, "k2", "cipher-b"); err != nil {
-		t.Fatalf("key1: %v", err)
-	}
-
-	// 换序 + 改权重，id 应保持；密钥字段由服务端从旧行回填
-	if err := routes.SaveForGroup(7, []GatewayRoute{
-		{ID: id1, SourceChannelID: 2, Weight: 9, Enabled: true},
-		{ID: id0, SourceChannelID: 1, Weight: 3, Enabled: true},
-	}); err != nil {
-		t.Fatalf("update reorder: %v", err)
-	}
-	second, err := routes.ListByGroupID(7)
-	if err != nil || len(second) != 2 {
-		t.Fatalf("list second: %v len=%d", err, len(second))
-	}
-	if second[0].ID != id1 || second[1].ID != id0 {
-		t.Fatalf("ids not preserved: got %d,%d want %d,%d", second[0].ID, second[1].ID, id1, id0)
-	}
-	if second[0].Weight != 9 || second[1].Weight != 3 {
-		t.Fatalf("weights: %+v", second)
-	}
-	if second[0].SourceAPIKeyName != "k2" || second[1].SourceAPIKeyName != "upstream-ops-gw-g7-r1" {
-		t.Fatalf("keys not preserved: %+v / %+v", second[0], second[1])
-	}
-
-	// 删除一条
-	if err := routes.SaveForGroup(7, []GatewayRoute{
-		{ID: id0, SourceChannelID: 1, Weight: 1, Enabled: true},
-	}); err != nil {
-		t.Fatalf("delete one: %v", err)
-	}
-	third, err := routes.ListByGroupID(7)
-	if err != nil || len(third) != 1 || third[0].ID != id0 {
-		t.Fatalf("after delete: %+v err=%v", third, err)
-	}
-}
-
-func TestNoteSuccessForPauseErrorClearsAfterStreak(t *testing.T) {
-	db := openTestDB(t)
-	routes := NewGatewayRoutes(db)
-	if err := routes.SaveForGroup(9, []GatewayRoute{
-		{SourceChannelID: 11, Weight: 1, Enabled: true},
-	}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	list, err := routes.ListByGroupID(9)
-	if err != nil || len(list) != 1 {
-		t.Fatalf("list: %v len=%d", err, len(list))
-	}
-	id := list[0].ID
-
-	until := time.Now().Add(5 * time.Minute)
-	if err := routes.SetTempUnschedulable(id, until, "upstream HTTP error\nstatus: 503", time.Now(), "req_pause_1"); err != nil {
-		t.Fatalf("set pause: %v", err)
-	}
-
-	// 无残留路由：调用应 noop
-	if err := routes.NoteSuccessForPauseError(0); err != nil {
-		t.Fatalf("id0: %v", err)
-	}
-
-	// 第 1、2 次成功：解除冷却，但保留错误信息
-	for i := 1; i <= 2; i++ {
-		if err := routes.NoteSuccessForPauseError(id); err != nil {
-			t.Fatalf("success %d: %v", i, err)
+	for _, table := range removedFeatureTables {
+		if db.Migrator().HasTable(table) {
+			t.Fatalf("table %s still exists", table)
 		}
-		got, err := routes.FindByID(id)
+	}
+	for _, target := range [][2]string{
+		{"channels", "subscription_enabled"},
+		{"channels", "proxy_enabled"},
+		{"captcha_configs", "proxy_enabled"},
+		{"notification_channels", "proxy_enabled"},
+	} {
+		hasColumn, err := tableHasColumn(db, target[0], target[1])
 		if err != nil {
-			t.Fatalf("get %d: %v", i, err)
+			t.Fatalf("inspect %s.%s: %v", target[0], target[1], err)
 		}
-		if got.TempUnschedulableUntil != nil {
-			t.Fatalf("success %d: until should be cleared", i)
-		}
-		if got.TempUnschedulableReason == "" {
-			t.Fatalf("success %d: reason should remain for UI", i)
-		}
-		if got.RecoverSuccessStreak != i {
-			t.Fatalf("success %d: streak=%d", i, got.RecoverSuccessStreak)
+		if hasColumn {
+			t.Fatalf("%s.%s still exists", target[0], target[1])
 		}
 	}
-
-	// 第 3 次成功：清空「已恢复/错误/清除」相关字段
-	if err := routes.NoteSuccessForPauseError(id); err != nil {
-		t.Fatalf("success 3: %v", err)
+	var names []string
+	if err := db.Model(&NotificationChannel{}).Order("id").Pluck("name", &names).Error; err != nil {
+		t.Fatalf("list notification channels: %v", err)
 	}
-	got, err := routes.FindByID(id)
-	if err != nil {
-		t.Fatalf("get final: %v", err)
+	if len(names) != 2 || names[0] != "tg" || names[1] != "wecom" {
+		t.Fatalf("notification channels = %v, want [tg wecom]", names)
 	}
-	if got.TempUnschedulableUntil != nil ||
-		got.TempUnschedulableReason != "" ||
-		got.TempUnschedulableAt != nil ||
-		got.TempUnschedulableRequestID != "" ||
-		got.RecoverSuccessStreak != 0 {
-		t.Fatalf("expected full clear, got %+v", got)
+	var captchaNames []string
+	if err := db.Model(&CaptchaConfig{}).Order("id").Pluck("name", &captchaNames).Error; err != nil {
+		t.Fatalf("list captcha configs: %v", err)
 	}
-
-	// 无残留后再成功：不累计 streak
-	if err := routes.NoteSuccessForPauseError(id); err != nil {
-		t.Fatalf("success after clear: %v", err)
+	if len(captchaNames) != 1 || captchaNames[0] != "yes" {
+		t.Fatalf("captcha configs = %v, want [yes]", captchaNames)
 	}
-	got, err = routes.FindByID(id)
-	if err != nil {
-		t.Fatalf("get after clear: %v", err)
+	var gotKeep, gotDrop Channel
+	if err := db.First(&gotKeep, keepBinding.ID).Error; err != nil {
+		t.Fatalf("find keep-binding: %v", err)
 	}
-	if got.RecoverSuccessStreak != 0 {
-		t.Fatalf("streak should stay 0, got %d", got.RecoverSuccessStreak)
+	if err := db.First(&gotDrop, dropBinding.ID).Error; err != nil {
+		t.Fatalf("find drop-binding: %v", err)
 	}
-}
-
-func TestGatewayUsageListModels(t *testing.T) {
-	db := openTestDB(t)
-	usage := NewGatewayUsageLogs(db)
-	now := time.Now()
-	rows := []GatewayUsageLog{
-		{RequestID: "r1", RequestedModel: "grok-4", UpstreamModel: "grok-4", GatewayGroupID: 1, GatewayKeyID: 1, Success: true, CreatedAt: now},
-		{RequestID: "r2", RequestedModel: "grok-4", UpstreamModel: "grok-4", GatewayGroupID: 1, GatewayKeyID: 1, Success: true, CreatedAt: now},
-		{RequestID: "r3", RequestedModel: "claude-sonnet", UpstreamModel: "claude-sonnet", GatewayGroupID: 1, GatewayKeyID: 2, Success: true, CreatedAt: now},
-		{RequestID: "r4", RequestedModel: "gpt-4o", UpstreamModel: "gpt-4o", GatewayGroupID: 2, GatewayKeyID: 3, Success: true, CreatedAt: now},
-		{RequestID: "r5", RequestedModel: "", UpstreamModel: "ignored", GatewayGroupID: 1, GatewayKeyID: 1, Success: true, CreatedAt: now},
+	if gotKeep.CaptchaConfigID == nil || *gotKeep.CaptchaConfigID != yes.ID {
+		t.Fatalf("keep-binding captcha_config_id = %v, want %d", gotKeep.CaptchaConfigID, yes.ID)
 	}
-	for i := range rows {
-		if err := usage.Create(&rows[i]); err != nil {
-			t.Fatalf("create %d: %v", i, err)
-		}
-	}
-
-	all, err := usage.ListModels(GatewayUsageQuery{})
-	if err != nil {
-		t.Fatalf("list all: %v", err)
-	}
-	if len(all) != 3 {
-		t.Fatalf("want 3 models, got %d %+v", len(all), all)
-	}
-	if all[0].Model != "grok-4" || all[0].Count != 2 {
-		t.Fatalf("first should be grok-4 x2, got %+v", all[0])
-	}
-
-	g1, err := usage.ListModels(GatewayUsageQuery{GatewayGroupID: 1})
-	if err != nil {
-		t.Fatalf("list g1: %v", err)
-	}
-	if len(g1) != 2 {
-		t.Fatalf("group1 want 2 models, got %d %+v", len(g1), g1)
-	}
-
-	// model 筛选不应影响下拉聚合
-	withModel, err := usage.ListModels(GatewayUsageQuery{Model: "gpt-4o"})
-	if err != nil {
-		t.Fatalf("list with model filter ignored: %v", err)
-	}
-	if len(withModel) != 3 {
-		t.Fatalf("model filter should be ignored, got %d", len(withModel))
+	if gotDrop.CaptchaConfigID != nil {
+		t.Fatalf("drop-binding captcha_config_id = %v, want nil", *gotDrop.CaptchaConfigID)
 	}
 }

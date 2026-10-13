@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,8 +14,6 @@ import (
 	"github.com/bejix/upstream-ops/backend/channel"
 	_ "github.com/bejix/upstream-ops/backend/connector/sub2api"
 	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/monitor"
-	"github.com/bejix/upstream-ops/backend/notify"
 	"github.com/bejix/upstream-ops/backend/progress"
 	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/gin-gonic/gin"
@@ -27,8 +23,7 @@ import (
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := storage.Open(storage.DBConfig{
-		Driver: storage.DBDriverSQLite,
-		Path:   filepath.Join(t.TempDir(), "api-test.db"),
+		Path: filepath.Join(t.TempDir(), "api-test.db"),
 	})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
@@ -155,7 +150,7 @@ func TestNotificationsLogsPage(t *testing.T) {
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
 		ID:            2,
 		Name:          "beta",
-		Type:          storage.NotifyWebhook,
+		Type:          storage.NotifyWecom,
 		ConfigCipher:  "y",
 		Subscriptions: "[]",
 		Enabled:       true,
@@ -165,7 +160,7 @@ func TestNotificationsLogsPage(t *testing.T) {
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
 		ID:            3,
 		Name:          "gamma",
-		Type:          storage.NotifyEmail,
+		Type:          storage.NotifyWecom,
 		ConfigCipher:  "z",
 		Subscriptions: "[]",
 		Enabled:       true,
@@ -215,7 +210,7 @@ func TestNotificationsLogsPage(t *testing.T) {
 	if len(resp.Data.Items) != 2 || resp.Data.Total != 3 || resp.Data.Page != 1 || resp.Data.Pages != 2 {
 		t.Fatalf("unexpected page response: %#v", resp.Data)
 	}
-	if resp.Data.Items[0].ChannelID != 3 || resp.Data.Items[0].ChannelName != "gamma" || resp.Data.Items[0].ChannelType != "email" {
+	if resp.Data.Items[0].ChannelID != 3 || resp.Data.Items[0].ChannelName != "gamma" || resp.Data.Items[0].ChannelType != "wecom" {
 		t.Fatalf("unexpected first item: %#v", resp.Data.Items[0])
 	}
 }
@@ -645,114 +640,6 @@ func TestSyncAllChannelsEmitsChannelMetadata(t *testing.T) {
 	}
 }
 
-func TestSyncChannelChecksSubscriptionAlerts(t *testing.T) {
-	syncSubscriptionAlertTest(t, "/api/channels/1/sync")
-}
-
-func TestSyncAllChannelsChecksSubscriptionAlerts(t *testing.T) {
-	syncSubscriptionAlertTest(t, "/api/channels/sync-all")
-}
-
-func syncSubscriptionAlertTest(t *testing.T, path string) {
-	t.Helper()
-	gin.SetMode(gin.TestMode)
-
-	db := openTestDB(t)
-	channels := storage.NewChannels(db)
-	authSessions := storage.NewAuthSessions(db)
-	captchas := storage.NewCaptchas(db)
-	announcements := storage.NewUpstreamAnnouncements(db)
-	rates := storage.NewRates(db)
-	monitorLogs := storage.NewMonitorLogs(db)
-	notifies := storage.NewNotifications(db)
-	cipher, err := crypto.NewCipher("test-secret")
-	if err != nil {
-		t.Fatalf("cipher: %v", err)
-	}
-
-	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer webhookSrv.Close()
-
-	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncryptAPI(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
-		Enabled:      true,
-	}); err != nil {
-		t.Fatalf("create notification channel: %v", err)
-	}
-
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/login":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"token","expires_in":3600}}`))
-		case "/api/v1/auth/me":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":10}}`))
-		case "/api/v1/usage/dashboard/stats":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"today_actual_cost":1,"total_actual_cost":2}}`))
-		case "/api/v1/subscriptions/progress":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"subscription":{"id":9,"group_id":3,"status":"active","expires_at":"2026-06-22T00:00:00Z","group":{"id":3,"name":"pro"}},"progress":{"id":9,"group_name":"pro","daily":{"limit_usd":1,"used_usd":0.5,"remaining_usd":0.5,"percentage":50}}}]}`))
-		case "/api/v1/groups/available":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"name":"pro","rate_multiplier":1}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer apiSrv.Close()
-
-	if err := channels.Create(&storage.Channel{
-		Name:                "sub",
-		Type:                storage.ChannelTypeSub2API,
-		SiteURL:             apiSrv.URL,
-		Username:            "u",
-		PasswordCipher:      mustEncryptAPI(t, cipher, "p"),
-		CredentialMode:      storage.CredentialModePassword,
-		SubscriptionEnabled: true,
-		MonitorEnabled:      true,
-	}); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-
-	channelSvc := channel.NewService(channels, authSessions, captchas, rates, monitorLogs, cipher)
-	dispatcher := notify.NewDispatcher(notifies, cipher, slog.New(slog.NewTextHandler(io.Discard, nil)), notify.Policy{
-		SubscriptionDailyRemainingThresholdPct: 90,
-		SubscriptionAlertCooldown:              time.Hour,
-		SendMaxAttempts:                        1,
-	})
-	monitorSvc := monitor.NewService(channels, announcements, rates, monitorLogs, channelSvc, dispatcher, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	r := gin.New()
-	registerChannels(r.Group("/api"), &Deps{
-		Channels: channels,
-		Rates:    rates,
-		Notifies: notifies,
-		Monitor:  monitorSvc,
-	})
-
-	req := httptest.NewRequest(http.MethodPost, path, nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
-	logs, err := notifies.ListLogs(10)
-	if err != nil {
-		t.Fatalf("list logs: %v", err)
-	}
-	found := false
-	for _, log := range logs {
-		if log.Event == storage.EventSubscriptionDailyLow && log.Success {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("subscription alert log not found: %#v", logs)
-	}
-}
-
 type stubMonitor struct{}
 
 func (s *stubMonitor) RefreshBalance(ctx context.Context, c *storage.Channel) error {
@@ -761,10 +648,6 @@ func (s *stubMonitor) RefreshBalance(ctx context.Context, c *storage.Channel) er
 }
 
 func (s *stubMonitor) RefreshRates(ctx context.Context, c *storage.Channel) error {
-	return nil
-}
-
-func (s *stubMonitor) CheckSubscriptionUsageAlerts(ctx context.Context, c *storage.Channel) error {
 	return nil
 }
 
@@ -904,8 +787,7 @@ func TestChannelCreateAndUpdateIgnoreAnnouncements(t *testing.T) {
 			"site_url":"https://a.example.com",
 			"username":"u",
 			"password":"p",
-		"ignore_announcements":true,
-		"subscription_enabled":true
+		"ignore_announcements":true
 	}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createRec := httptest.NewRecorder()
@@ -921,13 +803,9 @@ func TestChannelCreateAndUpdateIgnoreAnnouncements(t *testing.T) {
 	if !ch.IgnoreAnnouncements {
 		t.Fatalf("ignore_announcements = false, want true")
 	}
-	if !ch.SubscriptionEnabled {
-		t.Fatalf("subscription_enabled = false, want true")
-	}
 
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/channels/1", strings.NewReader(`{
-		"ignore_announcements":false,
-		"subscription_enabled":false
+		"ignore_announcements":false
 	}`))
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
@@ -941,30 +819,5 @@ func TestChannelCreateAndUpdateIgnoreAnnouncements(t *testing.T) {
 	}
 	if ch.IgnoreAnnouncements {
 		t.Fatalf("ignore_announcements = true, want false")
-	}
-	if ch.SubscriptionEnabled {
-		t.Fatalf("subscription_enabled = true, want false")
-	}
-
-	newAPIReq := httptest.NewRequest(http.MethodPost, "/api/channels", strings.NewReader(`{
-		"name":"demo-newapi",
-		"type":"newapi",
-		"site_url":"https://b.example.com",
-		"username":"u",
-		"password":"p",
-		"subscription_enabled":true
-	}`))
-	newAPIReq.Header.Set("Content-Type", "application/json")
-	newAPIRec := httptest.NewRecorder()
-	r.ServeHTTP(newAPIRec, newAPIReq)
-	if newAPIRec.Code != http.StatusOK {
-		t.Fatalf("newapi create status = %d body = %s", newAPIRec.Code, newAPIRec.Body.String())
-	}
-	newAPICh, err := channels.FindByID(2)
-	if err != nil {
-		t.Fatalf("find newapi channel: %v", err)
-	}
-	if newAPICh.SubscriptionEnabled {
-		t.Fatalf("newapi subscription_enabled = true, want false")
 	}
 }

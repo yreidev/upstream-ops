@@ -18,7 +18,7 @@ func TestFetchBalance(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	res, err := FetchBalance(context.Background(), &storage.CaptchaConfig{
-		Type:     storage.CaptchaTwoCaptcha,
+		Type:     storage.CaptchaYesCaptcha,
 		Endpoint: srv.URL,
 	}, "key")
 	if err != nil {
@@ -27,7 +27,7 @@ func TestFetchBalance(t *testing.T) {
 	if gotPath != "/getBalance" {
 		t.Fatalf("path = %q, want /getBalance", gotPath)
 	}
-	if res.Balance != 12.3456 || res.Unit != "usd" {
+	if res.Balance != 12.3456 || res.Unit != "points" {
 		t.Fatalf("result = %#v", res)
 	}
 }
@@ -57,7 +57,7 @@ func TestFetchBalanceReturnsProviderError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	_, err := FetchBalance(context.Background(), &storage.CaptchaConfig{
-		Type:     storage.CaptchaAntiCaptcha,
+		Type:     storage.CaptchaYesCaptcha,
 		Endpoint: srv.URL,
 	}, "key")
 	if err == nil {

@@ -18,8 +18,8 @@ const (
 // ChannelTags 渠道自定义标签。
 //
 // 数据库中保存为首尾都带分隔符的字符串：无标签为 ""，否则形如 ",vip,备用,"。
-// 这样按单个标签精确筛选时可以用 SQLite / MySQL 通用的
-// tags LIKE '%,<转义后的标签>,%' ESCAPE '!'，不依赖各自的 JSON 函数。
+// 这样按单个标签精确筛选时可以直接用
+// tags LIKE '%,<转义后的标签>,%' ESCAPE '!'，不依赖 JSON 函数。
 // 写库前会先 NormalizeChannelTags，保证单个标签内不含分隔符。
 //
 // JSON 中始终是字符串数组，无标签时输出 []（不输出 null）。

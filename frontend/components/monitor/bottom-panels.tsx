@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bell,
-  Clock3,
   RefreshCw,
   KeyRound,
   Pencil,
@@ -60,10 +59,6 @@ const eventMeta: Record<NotificationEvent, { icon: LucideIcon; cls: string }> = 
   rate_removed: { icon: Trash2, cls: "text-warning" },
   announcement: { icon: Bell, cls: "text-brand" },
   monitor_failed: { icon: ShieldX, cls: "text-danger" },
-  subscription_daily_remaining_low: { icon: AlertTriangle, cls: "text-warning" },
-  subscription_weekly_remaining_low: { icon: AlertTriangle, cls: "text-warning" },
-  subscription_monthly_remaining_low: { icon: AlertTriangle, cls: "text-warning" },
-  subscription_expiring: { icon: Clock3, cls: "text-warning" },
 }
 
 const FEED_PREVIEW_SIZE = 10
@@ -491,9 +486,6 @@ export function UpstreamAnnouncements() {
 }
 
 const captchaTypeLabel: Record<string, string> = {
-  capsolver: "CapSolver",
-  "2captcha": "2Captcha",
-  anticaptcha: "AntiCaptcha",
   yescaptcha: "YesCaptcha",
 }
 
@@ -661,12 +653,7 @@ function formatCaptchaBalance(c: CaptchaConfig) {
 
 const notifyTypeIcon: Partial<Record<NotificationChannelType, LucideIcon>> = {
   telegram: Send,
-  webhook: Send,
-  email: Send,
   wecom: Send,
-  dingtalk: Send,
-  feishu: Send,
-  serverchan3: Send,
 }
 
 export function NotificationStatus() {

@@ -75,8 +75,6 @@ interface FormState {
   only_created_key_groups_enabled: boolean
   turnstile_enabled: boolean
   ignore_announcements: boolean
-  subscription_enabled: boolean
-  proxy_enabled: boolean
   captcha_config_id: string // "" 表示不绑定
 
   notes: string
@@ -139,8 +137,6 @@ function initialState(c?: Channel | null): FormState {
     only_created_key_groups_enabled: c?.only_created_key_groups_enabled ?? false,
     turnstile_enabled: c?.turnstile_enabled ?? false,
     ignore_announcements: c?.ignore_announcements ?? false,
-    subscription_enabled: c?.subscription_enabled ?? false,
-    proxy_enabled: c?.proxy_enabled ?? false,
     captcha_config_id: c?.captcha_config_id != null ? String(c.captcha_config_id) : "",
     tags: normalizeTags(c?.tags ?? []),
     tag_input: "",
@@ -189,7 +185,6 @@ export function ChannelFormDialog({ open, onOpenChange, channel }: ChannelFormDi
 
   const isEdit = !!channel
   const isTokenMode = form.credential_mode === "token"
-  const supportsSubscription = form.type === "sub2api"
   // 编辑模式下，若 credential_mode 没变，token / password 都可以留空表示不修改。
   const modeChanged = isEdit && form.credential_mode !== (channel?.credential_mode ?? "password")
   const existingNewAPIUserID = isEdit && channel?.type === "newapi" ? (channel.user_id ?? "").trim() : ""
@@ -316,8 +311,6 @@ export function ChannelFormDialog({ open, onOpenChange, channel }: ChannelFormDi
           only_created_key_groups_enabled: form.only_created_key_groups_enabled,
           turnstile_enabled: !isTokenMode && form.turnstile_enabled,
           ignore_announcements: form.ignore_announcements,
-          subscription_enabled: supportsSubscription && form.subscription_enabled,
-          proxy_enabled: form.proxy_enabled,
           captcha_config_id: captchaConfigID,
           tags,
           notes,
@@ -348,8 +341,6 @@ export function ChannelFormDialog({ open, onOpenChange, channel }: ChannelFormDi
             only_created_key_groups_enabled: form.only_created_key_groups_enabled,
             turnstile_enabled: !isTokenMode && form.turnstile_enabled,
             ignore_announcements: form.ignore_announcements,
-            subscription_enabled: supportsSubscription && form.subscription_enabled,
-            proxy_enabled: form.proxy_enabled,
             captcha_config_id: captchaConfigID,
             tags,
             notes,
@@ -782,7 +773,7 @@ export function ChannelFormDialog({ open, onOpenChange, channel }: ChannelFormDi
             <div>
               <p className="text-sm font-medium">仅显示已创建密钥的分组</p>
               <p className="text-xs text-muted-foreground">
-                开启后渠道卡片 / 分组对话框 / 倍率变动通知只关注已创建密钥的分组；网关与通知设置仍可看全部分组
+                开启后渠道卡片 / 分组对话框 / 倍率变动通知只关注已创建密钥的分组；通知设置仍可看全部分组
               </p>
             </div>
             <Switch
@@ -800,32 +791,6 @@ export function ChannelFormDialog({ open, onOpenChange, channel }: ChannelFormDi
             <Switch
               checked={form.ignore_announcements}
               onCheckedChange={(v) => setForm({ ...form, ignore_announcements: v })}
-              disabled={submitting}
-            />
-          </div>
-
-          {supportsSubscription ? (
-            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-              <div>
-                <p className="text-sm font-medium">启用订阅购买</p>
-                <p className="text-xs text-muted-foreground">开启后充值弹窗显示订阅购买</p>
-              </div>
-              <Switch
-                checked={form.subscription_enabled}
-                onCheckedChange={(v) => setForm({ ...form, subscription_enabled: v })}
-                disabled={submitting}
-              />
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-            <div>
-              <p className="text-sm font-medium">启用代理 IP</p>
-              <p className="text-xs text-muted-foreground">全局代理启用后，该渠道上游请求走系统代理配置</p>
-            </div>
-            <Switch
-              checked={form.proxy_enabled}
-              onCheckedChange={(v) => setForm({ ...form, proxy_enabled: v })}
               disabled={submitting}
             />
           </div>

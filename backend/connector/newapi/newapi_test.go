@@ -535,22 +535,6 @@ func TestCreateRechargeRejectsFloatAmount(t *testing.T) {
 	}
 }
 
-func TestSubscriptionUnsupported(t *testing.T) {
-	c := New()
-	_, err := c.GetSubscriptionInfo(context.Background(), &connector.Channel{}, &connector.AuthSession{})
-	if err == nil || !strings.Contains(err.Error(), "不支持订阅") {
-		t.Fatalf("GetSubscriptionInfo err = %v, want unsupported error", err)
-	}
-	_, err = c.CreateSubscription(context.Background(), &connector.Channel{}, &connector.AuthSession{}, connector.SubscriptionRequest{})
-	if err == nil || !strings.Contains(err.Error(), "不支持订阅") {
-		t.Fatalf("CreateSubscription err = %v, want unsupported error", err)
-	}
-	_, err = c.GetSubscriptionUsage(context.Background(), &connector.Channel{}, &connector.AuthSession{})
-	if err == nil || !strings.Contains(err.Error(), "不支持订阅") {
-		t.Fatalf("GetSubscriptionUsage err = %v, want unsupported error", err)
-	}
-}
-
 func TestListAPIKeys(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/user/self/groups", func(w http.ResponseWriter, r *http.Request) {

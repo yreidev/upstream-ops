@@ -35,10 +35,9 @@ type Service struct {
 	MonitorLogs  *storage.MonitorLogs
 	Cipher       *crypto.Cipher
 
-	mu          sync.RWMutex
-	proxyConfig config.ProxyConfig
-	upstream    config.UpstreamConfig
-	locks       sync.Map
+	mu       sync.RWMutex
+	upstream config.UpstreamConfig
+	locks    sync.Map
 
 	// apiKeyGroupSetCache 缓存"已创建密钥的分组集合"。
 	// 该集合需要分页拉取上游全部密钥计算，monitor 每次刷新和前端切页都会用到，
@@ -64,23 +63,10 @@ func NewService(
 	}
 }
 
-func (s *Service) UpdateProxyConfig(cfg config.ProxyConfig) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.proxyConfig = cfg
-}
-
 func (s *Service) UpdateUpstreamConfig(cfg config.UpstreamConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.upstream = cfg.WithDefaults()
-}
-
-func (s *Service) proxyURL() (string, error) {
-	s.mu.RLock()
-	cfg := s.proxyConfig
-	s.mu.RUnlock()
-	return cfg.ActiveURL()
 }
 
 func (s *Service) upstreamConfig() config.UpstreamConfig {
@@ -88,19 +74,6 @@ func (s *Service) upstreamConfig() config.UpstreamConfig {
 	cfg := s.upstream
 	s.mu.RUnlock()
 	return cfg.WithDefaults()
-}
-
-func applyProxy(conn connector.Connector, resolved *connector.Channel) {
-	if resolved == nil || strings.TrimSpace(resolved.ProxyURL) == "" {
-		return
-	}
-	if setter, ok := conn.(connector.ProxySetter); ok {
-		setter.SetProxy(resolved.ProxyURL)
-	}
-}
-
-func (s *Service) ApplyProxy(conn connector.Connector, resolved *connector.Channel) {
-	applyProxy(conn, resolved)
 }
 
 func applyHTTPConfig(conn any, cfg config.UpstreamConfig) {
@@ -147,27 +120,25 @@ type Sub2APITokenCredential struct {
 //   - password: Password 必填；Username 为登录账号
 //   - token:    TokenCredential 必填（已序列化为 JSON 字符串）；Username 仅作展示备注
 type CreateInput struct {
-	Name                   string
-	Type                   storage.ChannelType
-	SiteURL                string
-	Username               string
-	SortOrder              int
-	Password               string
-	CredentialMode         storage.CredentialMode
-	TokenCredential        string // JSON：password 模式时为空
-	LoginExtraParams       string
-	TurnstileEnabled       bool
-	IgnoreAnnouncements    bool
-	SubscriptionEnabled    bool
-	ProxyEnabled           bool
-	CaptchaConfigID        *uint
-	BalanceThreshold       float64
-	RechargeMultiplier     *float64
-	RechargeMultiplierMode string
-	MonitorEnabled         bool
+	Name                        string
+	Type                        storage.ChannelType
+	SiteURL                     string
+	Username                    string
+	SortOrder                   int
+	Password                    string
+	CredentialMode              storage.CredentialMode
+	TokenCredential             string // JSON：password 模式时为空
+	LoginExtraParams            string
+	TurnstileEnabled            bool
+	IgnoreAnnouncements         bool
+	CaptchaConfigID             *uint
+	BalanceThreshold            float64
+	RechargeMultiplier          *float64
+	RechargeMultiplierMode      string
+	MonitorEnabled              bool
 	OnlyCreatedKeyGroupsEnabled bool
-	Tags                   []string
-	Notes                  string
+	Tags                        []string
+	Notes                       string
 }
 
 func (s *Service) Create(in CreateInput) (*storage.Channel, error) {
@@ -192,26 +163,24 @@ func (s *Service) Create(in CreateInput) (*storage.Channel, error) {
 		return nil, fmt.Errorf("encrypt credential: %w", err)
 	}
 	c := &storage.Channel{
-		Name:                   in.Name,
-		Type:                   in.Type,
-		SiteURL:                in.SiteURL,
-		Username:               in.Username,
-		SortOrder:              normalizeSortOrder(in.SortOrder),
-		PasswordCipher:         enc,
-		CredentialMode:         mode,
-		LoginExtraParams:       loginExtraParams,
-		TurnstileEnabled:       in.TurnstileEnabled && mode == storage.CredentialModePassword, // token 模式不需要打码
-		IgnoreAnnouncements:    in.IgnoreAnnouncements,
-		SubscriptionEnabled:    in.SubscriptionEnabled,
-		ProxyEnabled:           in.ProxyEnabled,
-		CaptchaConfigID:        in.CaptchaConfigID,
-		BalanceThreshold:       in.BalanceThreshold,
-		RechargeMultiplier:     normalizeRechargeMultiplier(in.RechargeMultiplier),
-		RechargeMultiplierMode: connector.NormalizeRechargeMultiplierMode(in.RechargeMultiplierMode),
-		MonitorEnabled:         in.MonitorEnabled,
+		Name:                        in.Name,
+		Type:                        in.Type,
+		SiteURL:                     in.SiteURL,
+		Username:                    in.Username,
+		SortOrder:                   normalizeSortOrder(in.SortOrder),
+		PasswordCipher:              enc,
+		CredentialMode:              mode,
+		LoginExtraParams:            loginExtraParams,
+		TurnstileEnabled:            in.TurnstileEnabled && mode == storage.CredentialModePassword, // token 模式不需要打码
+		IgnoreAnnouncements:         in.IgnoreAnnouncements,
+		CaptchaConfigID:             in.CaptchaConfigID,
+		BalanceThreshold:            in.BalanceThreshold,
+		RechargeMultiplier:          normalizeRechargeMultiplier(in.RechargeMultiplier),
+		RechargeMultiplierMode:      connector.NormalizeRechargeMultiplierMode(in.RechargeMultiplierMode),
+		MonitorEnabled:              in.MonitorEnabled,
 		OnlyCreatedKeyGroupsEnabled: in.OnlyCreatedKeyGroupsEnabled,
-		Tags:                   storage.NormalizeChannelTags(in.Tags),
-		Notes:                  strings.TrimSpace(in.Notes),
+		Tags:                        storage.NormalizeChannelTags(in.Tags),
+		Notes:                       strings.TrimSpace(in.Notes),
 	}
 	if mode == storage.CredentialModeToken {
 		// token 模式不依赖打码 provider
@@ -225,26 +194,24 @@ func (s *Service) Create(in CreateInput) (*storage.Channel, error) {
 
 // UpdateInput 编辑渠道的可选字段。Password / TokenCredential 为空表示不修改凭据。
 type UpdateInput struct {
-	Name                   *string
-	SiteURL                *string
-	Username               *string
-	SortOrder              *int
-	Password               *string
-	CredentialMode         *storage.CredentialMode
-	TokenCredential        *string // JSON
-	LoginExtraParams       *string
-	TurnstileEnabled       *bool
-	IgnoreAnnouncements    *bool
-	SubscriptionEnabled    *bool
-	ProxyEnabled           *bool
-	CaptchaConfigID        *uint
-	BalanceThreshold       *float64
-	RechargeMultiplier     *float64
-	RechargeMultiplierMode *string
-	MonitorEnabled         *bool
+	Name                        *string
+	SiteURL                     *string
+	Username                    *string
+	SortOrder                   *int
+	Password                    *string
+	CredentialMode              *storage.CredentialMode
+	TokenCredential             *string // JSON
+	LoginExtraParams            *string
+	TurnstileEnabled            *bool
+	IgnoreAnnouncements         *bool
+	CaptchaConfigID             *uint
+	BalanceThreshold            *float64
+	RechargeMultiplier          *float64
+	RechargeMultiplierMode      *string
+	MonitorEnabled              *bool
 	OnlyCreatedKeyGroupsEnabled *bool
-	Tags                   *[]string // nil 表示不修改；空切片表示清空
-	Notes                  *string
+	Tags                        *[]string // nil 表示不修改；空切片表示清空
+	Notes                       *string
 }
 
 func (s *Service) Update(id uint, in UpdateInput) (*storage.Channel, error) {
@@ -327,12 +294,6 @@ func (s *Service) Update(id uint, in UpdateInput) (*storage.Channel, error) {
 	}
 	if in.IgnoreAnnouncements != nil {
 		c.IgnoreAnnouncements = *in.IgnoreAnnouncements
-	}
-	if in.SubscriptionEnabled != nil {
-		c.SubscriptionEnabled = *in.SubscriptionEnabled
-	}
-	if in.ProxyEnabled != nil {
-		c.ProxyEnabled = *in.ProxyEnabled
 	}
 	if in.CaptchaConfigID != nil {
 		if finalMode == storage.CredentialModePassword {
@@ -532,13 +493,6 @@ func (s *Service) Resolve(ctx context.Context, c *storage.Channel) (*connector.C
 		return nil, err
 	}
 	resolved.LoginExtraParams = loginExtraParams
-	if c.ProxyEnabled {
-		proxyURL, err := s.proxyURL()
-		if err != nil {
-			return nil, err
-		}
-		resolved.ProxyURL = proxyURL
-	}
 	if c.CredentialMode == storage.CredentialModeToken {
 		// token 模式：raw 是 JSON，Password 留空避免被 connector 误用
 		resolved.Password = ""
@@ -628,15 +582,7 @@ func (s *Service) solveCaptcha(ctx context.Context, captchaID uint, siteKey, pag
 	if err != nil {
 		return "", err
 	}
-	proxyURL := ""
-	if cfg.ProxyEnabled {
-		var proxyErr error
-		proxyURL, proxyErr = s.proxyURL()
-		if proxyErr != nil {
-			return "", proxyErr
-		}
-	}
-	provider, err := captcha.BuildWithProxy(cfg, apiKey, proxyURL)
+	provider, err := captcha.Build(cfg, apiKey)
 	if err != nil {
 		return "", err
 	}
@@ -946,7 +892,6 @@ func (s *Service) TestLogin(ctx context.Context, channelID uint) error {
 		return err
 	}
 	s.applyHTTPConfig(conn)
-	applyProxy(conn, resolved)
 	if c.CredentialMode == storage.CredentialModeToken {
 		_, err = s.EnsureSession(ctx, c, resolved, conn)
 		return err
@@ -974,7 +919,6 @@ func (s *Service) RedeemCode(ctx context.Context, channelID uint, code string) (
 		return nil, err
 	}
 	s.applyHTTPConfig(conn)
-	applyProxy(conn, resolved)
 	session, err := s.EnsureSession(ctx, c, resolved, conn)
 	if err != nil {
 		return nil, err
@@ -1035,7 +979,6 @@ func (s *Service) GetRechargeInfo(ctx context.Context, channelID uint) (*connect
 		return nil, err
 	}
 	s.applyHTTPConfig(conn)
-	applyProxy(conn, resolved)
 	session, err := s.EnsureSession(ctx, c, resolved, conn)
 	if err != nil {
 		return nil, err
@@ -1062,7 +1005,6 @@ func (s *Service) CreateRecharge(ctx context.Context, channelID uint, req connec
 		return nil, err
 	}
 	s.applyHTTPConfig(conn)
-	applyProxy(conn, resolved)
 	session, err := s.EnsureSession(ctx, c, resolved, conn)
 	if err != nil {
 		return nil, err
@@ -1073,62 +1015,6 @@ func (s *Service) CreateRecharge(ctx context.Context, channelID uint, req connec
 	}
 	_ = s.Channels.SetLastError(c.ID, "")
 	return launch, nil
-}
-
-func (s *Service) GetSubscriptionInfo(ctx context.Context, channelID uint) (*connector.SubscriptionInfo, error) {
-	c, resolved, conn, session, err := s.prepareConnectorCall(ctx, channelID)
-	if err != nil {
-		return nil, err
-	}
-	if c.Type != storage.ChannelTypeSub2API {
-		return nil, errors.New("仅 Sub2API 支持订阅购买")
-	}
-	info, err := conn.GetSubscriptionInfo(ctx, resolved, session)
-	if err != nil {
-		return nil, err
-	}
-	_ = s.Channels.SetLastError(c.ID, "")
-	return info, nil
-}
-
-func (s *Service) CreateSubscription(ctx context.Context, channelID uint, req connector.SubscriptionRequest) (*connector.SubscriptionLaunch, error) {
-	req.PlanID = strings.TrimSpace(req.PlanID)
-	req.PaymentMethod = strings.TrimSpace(req.PaymentMethod)
-	if req.PlanID == "" {
-		return nil, errors.New("请选择订阅套餐")
-	}
-	if req.PaymentMethod == "" {
-		return nil, errors.New("请选择支付方式")
-	}
-	c, resolved, conn, session, err := s.prepareConnectorCall(ctx, channelID)
-	if err != nil {
-		return nil, err
-	}
-	if c.Type != storage.ChannelTypeSub2API {
-		return nil, errors.New("仅 Sub2API 支持订阅购买")
-	}
-	launch, err := conn.CreateSubscription(ctx, resolved, session, req)
-	if err != nil {
-		return nil, err
-	}
-	_ = s.Channels.SetLastError(c.ID, "")
-	return launch, nil
-}
-
-func (s *Service) GetSubscriptionUsage(ctx context.Context, channelID uint) (*connector.SubscriptionUsageInfo, error) {
-	c, resolved, conn, session, err := s.prepareConnectorCall(ctx, channelID)
-	if err != nil {
-		return nil, err
-	}
-	if c.Type != storage.ChannelTypeSub2API {
-		return nil, errors.New("仅 Sub2API 支持订阅用量")
-	}
-	info, err := conn.GetSubscriptionUsage(ctx, resolved, session)
-	if err != nil {
-		return nil, err
-	}
-	_ = s.Channels.SetLastError(c.ID, "")
-	return info, nil
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context, channelID uint, query connector.APIKeyQuery) (*connector.APIKeyPage, error) {
@@ -1222,7 +1108,6 @@ func (s *Service) prepareConnectorCall(ctx context.Context, channelID uint) (*st
 		return nil, nil, nil, nil, err
 	}
 	s.applyHTTPConfig(conn)
-	applyProxy(conn, resolved)
 	session, err := s.EnsureSession(ctx, c, resolved, conn)
 	if err != nil {
 		return nil, nil, nil, nil, err

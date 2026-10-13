@@ -65,7 +65,6 @@ type Channel struct {
 	Password               string
 	LoginExtraParams       map[string]any
 	TurnstileEnabled       bool
-	ProxyURL               string
 	RechargeMultiplier     *float64
 	RechargeMultiplierMode string
 	// TurnstileToken 由调用方在 Login 前预先求解打码后填入；为空则直接发起登录。
@@ -189,68 +188,6 @@ type RechargeLaunch struct {
 	ExpiresAt  *time.Time        `json:"expires_at,omitempty"`
 }
 
-type SubscriptionMethod struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
-}
-
-type SubscriptionPlan struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description,omitempty"`
-	Price           float64  `json:"price"`
-	Currency        string   `json:"currency,omitempty"`
-	Validity        string   `json:"validity,omitempty"`
-	GroupName       string   `json:"group_name,omitempty"`
-	Quota           float64  `json:"quota,omitempty"`
-	DailyLimitUSD   *float64 `json:"daily_limit_usd,omitempty"`
-	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd,omitempty"`
-	MonthlyLimitUSD *float64 `json:"monthly_limit_usd,omitempty"`
-	Features        []string `json:"features,omitempty"`
-	PaymentMethods  []string `json:"payment_methods,omitempty"`
-}
-
-type SubscriptionInfo struct {
-	Plans   []SubscriptionPlan   `json:"plans"`
-	Methods []SubscriptionMethod `json:"methods"`
-}
-
-type SubscriptionRequest struct {
-	PlanID        string `json:"plan_id"`
-	PaymentMethod string `json:"payment_method"`
-	IsMobile      bool   `json:"is_mobile"`
-}
-
-type SubscriptionLaunch = RechargeLaunch
-
-type SubscriptionUsageWindow struct {
-	LimitUSD         float64    `json:"limit_usd"`
-	UsedUSD          float64    `json:"used_usd"`
-	RemainingUSD     float64    `json:"remaining_usd"`
-	RemainingPercent float64    `json:"remaining_percent"`
-	UsedPercent      float64    `json:"used_percent"`
-	WindowStart      *time.Time `json:"window_start,omitempty"`
-	ResetsAt         *time.Time `json:"resets_at,omitempty"`
-	ResetsInSeconds  int64      `json:"resets_in_seconds"`
-}
-
-type SubscriptionUsage struct {
-	ID            int64                    `json:"id"`
-	GroupID       int64                    `json:"group_id"`
-	GroupName     string                   `json:"group_name"`
-	Status        string                   `json:"status"`
-	StartsAt      *time.Time               `json:"starts_at,omitempty"`
-	ExpiresAt     *time.Time               `json:"expires_at,omitempty"`
-	ExpiresInDays int                      `json:"expires_in_days"`
-	Daily         *SubscriptionUsageWindow `json:"daily,omitempty"`
-	Weekly        *SubscriptionUsageWindow `json:"weekly,omitempty"`
-	Monthly       *SubscriptionUsageWindow `json:"monthly,omitempty"`
-}
-
-type SubscriptionUsageInfo struct {
-	Items []SubscriptionUsage `json:"items"`
-}
-
 type APIKeyQuery struct {
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
@@ -372,9 +309,6 @@ type Connector interface {
 	RedeemCode(ctx context.Context, channel *Channel, session *AuthSession, code string) (*RedeemResult, error)
 	GetRechargeInfo(ctx context.Context, channel *Channel, session *AuthSession) (*RechargeInfo, error)
 	CreateRecharge(ctx context.Context, channel *Channel, session *AuthSession, req RechargeRequest) (*RechargeLaunch, error)
-	GetSubscriptionInfo(ctx context.Context, channel *Channel, session *AuthSession) (*SubscriptionInfo, error)
-	CreateSubscription(ctx context.Context, channel *Channel, session *AuthSession, req SubscriptionRequest) (*SubscriptionLaunch, error)
-	GetSubscriptionUsage(ctx context.Context, channel *Channel, session *AuthSession) (*SubscriptionUsageInfo, error)
 	ListAPIKeys(ctx context.Context, channel *Channel, session *AuthSession, query APIKeyQuery) (*APIKeyPage, error)
 	ListAPIKeyGroups(ctx context.Context, channel *Channel, session *AuthSession) ([]APIKeyGroup, error)
 	CreateAPIKey(ctx context.Context, channel *Channel, session *AuthSession, req APIKeyCreateRequest) (*APIKey, error)
@@ -386,10 +320,6 @@ type Connector interface {
 // SessionRefresher 是支持 refresh_token 续期的 connector 可选能力。
 type SessionRefresher interface {
 	RefreshSession(ctx context.Context, channel *Channel, session *AuthSession) (*AuthSession, error)
-}
-
-type ProxySetter interface {
-	SetProxy(proxyURL string)
 }
 
 type HTTPConfig struct {

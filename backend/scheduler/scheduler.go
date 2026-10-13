@@ -26,13 +26,6 @@ type Scheduler struct {
 	announcements *storage.UpstreamAnnouncements
 	captchas      *storage.Captchas
 	cipher        *crypto.Cipher
-	gatewayResort gatewayRateResortService
-	proxy         config.ProxyConfig
-}
-
-// gatewayRateResortService 倍率扫描后重排开启了「渠道分组价格倍率重排」的网关组。
-type gatewayRateResortService interface {
-	ResortRoutesOnRateScan(ctx context.Context)
 }
 
 // New 构造调度器。
@@ -45,8 +38,6 @@ func New(
 	announcements *storage.UpstreamAnnouncements,
 	captchas *storage.Captchas,
 	cipher *crypto.Cipher,
-	gatewayResort gatewayRateResortService,
-	proxy config.ProxyConfig,
 	log *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
@@ -60,8 +51,6 @@ func New(
 		announcements: announcements,
 		captchas:      captchas,
 		cipher:        cipher,
-		gatewayResort: gatewayResort,
-		proxy:         proxy,
 	}
 }
 
@@ -104,7 +93,7 @@ func (s *Scheduler) runBalance() {
 	defer cancel()
 	s.monitor.ScanAllBalances(ctx)
 	if s.captchas != nil && s.cipher != nil {
-		if _, err := captcha.RefreshAllBalancesWithProxy(ctx, s.captchas, s.cipher, s.log, s.proxy); err != nil {
+		if _, err := captcha.RefreshAllBalances(ctx, s.captchas, s.cipher, s.log); err != nil {
 			s.log.Warn("refresh captcha balances failed", "err", err)
 		}
 	}
@@ -115,9 +104,6 @@ func (s *Scheduler) runRates() {
 	defer cancel()
 	if s.monitor != nil {
 		s.monitor.ScanAllRates(ctx)
-	}
-	if s.gatewayResort != nil {
-		s.gatewayResort.ResortRoutesOnRateScan(ctx)
 	}
 }
 

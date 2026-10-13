@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,8 +16,8 @@ import (
 )
 
 const (
-	githubRepoURL              = "https://github.com/bejix/upstream-ops"
-	defaultGitHubLatestRelease = "https://api.github.com/repos/bejix/upstream-ops/releases/latest"
+	githubRepoURL              = "https://github.com/yreidev/upstream-ops"
+	defaultGitHubLatestRelease = "https://api.github.com/repos/yreidev/upstream-ops/releases/latest"
 )
 
 var (
@@ -44,19 +43,16 @@ type githubReleaseResponse struct {
 
 func registerVersion(api *gin.RouterGroup, d *Deps) {
 	api.GET("/version", func(c *gin.Context) {
-		force := c.Query("force") == "1" || strings.EqualFold(c.Query("force"), "true")
-		c.JSON(http.StatusOK, buildVersionResponse(c.Request.Context(), d, force))
+		c.JSON(http.StatusOK, buildVersionResponse(c.Request.Context(), d))
 	})
 }
 
-func buildVersionResponse(ctx context.Context, d *Deps, force bool) versionResponse {
+func buildVersionResponse(ctx context.Context, d *Deps) versionResponse {
 	app := config.AppConfig{Title: "UpstreamOps"}
-	proxyCfg := config.ProxyConfig{}
 	if d != nil && d.Runtime != nil {
 		if cfg, err := config.LoadFile(d.Runtime.ConfigPath()); err == nil {
 			app = cfg.App
 		}
-		proxyCfg = d.Runtime.CurrentProxy()
 	}
 
 	resp := versionResponse{
@@ -66,7 +62,7 @@ func buildVersionResponse(ctx context.Context, d *Deps, force bool) versionRespo
 		RepoURL: githubRepoURL,
 	}
 
-	latest, releaseURL, err := fetchLatestGitHubRelease(ctx, versionCheckClient(proxyCfg, force))
+	latest, releaseURL, err := fetchLatestGitHubRelease(ctx, githubReleaseClient)
 	if err != nil {
 		resp.UpdateError = err.Error()
 		return resp
@@ -75,26 +71,6 @@ func buildVersionResponse(ctx context.Context, d *Deps, force bool) versionRespo
 	resp.ReleaseURL = releaseURL
 	resp.UpdateAvailable = isVersionNewer(latest, global.VERSION)
 	return resp
-}
-
-func versionCheckClient(proxyCfg config.ProxyConfig, force bool) *http.Client {
-	if !proxyCfg.VersionCheckEnabled && !force {
-		return githubReleaseClient
-	}
-	proxyURL, err := proxyCfg.ActiveURL()
-	if err != nil || proxyURL == "" {
-		return githubReleaseClient
-	}
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return githubReleaseClient
-	}
-	return &http.Client{
-		Timeout: githubReleaseClient.Timeout,
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(u),
-		},
-	}
 }
 
 func fetchLatestGitHubRelease(ctx context.Context, client *http.Client) (string, string, error) {

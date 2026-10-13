@@ -77,9 +77,6 @@ import {
   ChannelAPIKeysDialog,
   type ChannelAPIKeyInitialAction,
 } from "@/components/monitor/channel-api-keys-dialog"
-import {
-  ChannelSubscriptionUsageMetricTiles,
-} from "@/components/monitor/channel-subscription-usage-dialog"
 
 type Status = "healthy" | "low" | "failed" | "idle"
 type ChannelPageSize = 9 | 18 | 36 | 72 | 81 | "all"
@@ -580,7 +577,6 @@ const stageLabel: Record<ProgressEvent["stage"], string> = {
   login: "登录",
   balance: "余额",
   cost: "消费",
-  subscription: "订阅",
   rates: "倍率",
   done: "完成",
   error: "失败",
@@ -592,7 +588,6 @@ const stageOrder: Record<ProgressEvent["stage"], number> = {
   login: 3,
   balance: 4,
   cost: 5,
-  subscription: 6,
   rates: 7,
   done: 9,
   error: 9,
@@ -1272,7 +1267,6 @@ export function ChannelCards() {
                         </span>
                       </div>
                     </StatTile>
-                    <ChannelSubscriptionUsageMetricTiles channel={c} />
                     {c.last_error ? (
                       <div className="col-span-3 rounded-md border border-border bg-muted/20 px-2.5 py-2">
                         <p className="max-h-16 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-[11px] leading-4 text-danger" title={c.last_error}>

@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -14,19 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
-type fakeGatewayResort struct {
-	called int
-}
-
-func (f *fakeGatewayResort) ResortRoutesOnRateScan(_ context.Context) {
-	f.called++
-}
-
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := storage.Open(storage.DBConfig{
-		Driver: storage.DBDriverSQLite,
-		Path:   filepath.Join(t.TempDir(), "scheduler-test.db"),
+		Path: filepath.Join(t.TempDir(), "scheduler-test.db"),
 	})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
@@ -72,8 +62,6 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 		announcements,
 		nil,
 		nil,
-		nil,
-		config.ProxyConfig{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -85,28 +73,5 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 	}
 	if total != 0 || len(list) != 0 {
 		t.Fatalf("announcements not cleaned: total=%d list=%#v", total, list)
-	}
-}
-
-func TestRunRatesTriggersGatewayResort(t *testing.T) {
-	gatewayResort := &fakeGatewayResort{}
-	s := New(
-		config.SchedulerConfig{},
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		gatewayResort,
-		config.ProxyConfig{},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
-
-	s.runRates()
-
-	if gatewayResort.called != 1 {
-		t.Fatalf("gateway resort calls = %d, want 1", gatewayResort.called)
 	}
 }

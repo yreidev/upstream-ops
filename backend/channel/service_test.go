@@ -30,8 +30,7 @@ func (f *fakeHTTPConfigConnector) SetHTTPConfig(cfg connector.HTTPConfig) {
 func testService(t *testing.T) (*Service, *crypto.Cipher) {
 	t.Helper()
 	db, err := storage.Open(storage.DBConfig{
-		Driver: storage.DBDriverSQLite,
-		Path:   filepath.Join(t.TempDir(), "test.db"),
+		Path: filepath.Join(t.TempDir(), "test.db"),
 	})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -58,77 +57,6 @@ func testService(t *testing.T) (*Service, *crypto.Cipher) {
 		cipher,
 	)
 	return svc, cipher
-}
-
-func TestResolveAppliesProxyOnlyWhenEnabled(t *testing.T) {
-	svc, cipher := testService(t)
-	svc.UpdateProxyConfig(config.ProxyConfig{
-		Enabled:  true,
-		Protocol: "socks5",
-		Host:     "127.0.0.1",
-		Port:     1080,
-		Username: "u",
-		Password: "p",
-	})
-
-	enc, err := cipher.Encrypt("secret")
-	if err != nil {
-		t.Fatalf("encrypt: %v", err)
-	}
-	withProxy := &storage.Channel{
-		ID:             1,
-		Name:           "with-proxy",
-		Type:           storage.ChannelTypeNewAPI,
-		SiteURL:        "https://example.com",
-		Username:       "u",
-		PasswordCipher: enc,
-		ProxyEnabled:   true,
-	}
-	resolved, err := svc.Resolve(context.Background(), withProxy)
-	if err != nil {
-		t.Fatalf("resolve with proxy: %v", err)
-	}
-	if resolved.ProxyURL != "socks5://u:p@127.0.0.1:1080" {
-		t.Fatalf("proxy url = %q", resolved.ProxyURL)
-	}
-
-	withoutProxy := *withProxy
-	withoutProxy.ProxyEnabled = false
-	resolved, err = svc.Resolve(context.Background(), &withoutProxy)
-	if err != nil {
-		t.Fatalf("resolve without proxy: %v", err)
-	}
-	if resolved.ProxyURL != "" {
-		t.Fatalf("proxy url = %q, want empty", resolved.ProxyURL)
-	}
-}
-
-func TestResolveSkipsProxyWhenGlobalProxyDisabled(t *testing.T) {
-	svc, cipher := testService(t)
-	svc.UpdateProxyConfig(config.ProxyConfig{
-		Protocol: "socks5",
-		Host:     "127.0.0.1",
-		Port:     1080,
-	})
-	enc, err := cipher.Encrypt("secret")
-	if err != nil {
-		t.Fatalf("encrypt: %v", err)
-	}
-	resolved, err := svc.Resolve(context.Background(), &storage.Channel{
-		ID:             1,
-		Name:           "with-proxy",
-		Type:           storage.ChannelTypeNewAPI,
-		SiteURL:        "https://example.com",
-		Username:       "u",
-		PasswordCipher: enc,
-		ProxyEnabled:   true,
-	})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if resolved.ProxyURL != "" {
-		t.Fatalf("proxy url = %q, want empty", resolved.ProxyURL)
-	}
 }
 
 func TestApplyHTTPConfigUsesUpstreamConfig(t *testing.T) {

@@ -8,7 +8,6 @@ import {
   LogOut,
   Menu,
   Moon,
-  Network,
   RefreshCw,
   Settings,
   Sun,
@@ -87,7 +86,7 @@ export function MonitorHeader() {
   async function handleCheckVersion() {
     setCheckingVersion(true)
     try {
-      const result = await apiFetch<AppVersion>("/version?force=1")
+      const result = await apiFetch<AppVersion>("/version")
       appVersion.setData(result)
       if (result.update_error) {
         toast.error(result.update_error)
@@ -130,7 +129,7 @@ export function MonitorHeader() {
                 </button>
                 {updateAvailable ? (
                   <a
-                    href={updateURL || "https://github.com/bejix/upstream-ops"}
+                    href={updateURL || "https://github.com/yreidev/upstream-ops"}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="ml-1.5 font-medium text-emerald-600 underline-offset-2 hover:text-emerald-700 hover:underline sm:ml-2"
@@ -207,10 +206,6 @@ export function MonitorHeader() {
                 <Home className="size-4" />
                 主页
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => navigate("/gateway")}>
-                <Network className="size-4" />
-                请求网关
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => navigate("/settings")}>
                 <Settings className="size-4" />
                 系统设置
@@ -218,7 +213,7 @@ export function MonitorHeader() {
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <a
-                  href="https://github.com/bejix/upstream-ops"
+                  href="https://github.com/yreidev/upstream-ops"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -266,23 +261,6 @@ export function MonitorHeader() {
                 <Button
                   variant="outline"
                   size="icon"
-                  onClick={() => navigate("/gateway")}
-                  className="size-8 border-border bg-background text-foreground hover:bg-muted"
-                  aria-label="请求网关"
-                >
-                  <Network className="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">
-                {"请求网关"}
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
                   onClick={() => navigate("/settings")}
                   className="size-8 border-border bg-background text-foreground hover:bg-muted"
                   aria-label="系统设置"
@@ -305,7 +283,7 @@ export function MonitorHeader() {
                   aria-label="GitHub 仓库"
                 >
                   <a
-                    href="https://github.com/bejix/upstream-ops"
+                    href="https://github.com/yreidev/upstream-ops"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -314,7 +292,7 @@ export function MonitorHeader() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
-                {"GitHub · bejix/upstream-ops"}
+                {"GitHub · yreidev/upstream-ops"}
               </TooltipContent>
             </Tooltip>
 

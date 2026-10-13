@@ -17,7 +17,7 @@ func init() {
 
 // yesCaptcha 对接 https://yescaptcha.com 的 TurnstileTaskProxyless。
 //
-// 协议跟 2Captcha / AntiCaptcha 完全同源（同样 createTask + getTaskResult JSON API）：
+// 走 createTask + getTaskResult JSON API：
 //
 //	POST /createTask     -> { errorId, taskId }
 //	POST /getTaskResult  -> { status: "ready", solution: { token } } 或 status: "processing"
@@ -38,12 +38,6 @@ func newYesCaptcha(c Config) *yesCaptcha {
 		cfg:  c,
 		http: resty.New().SetTimeout(30 * time.Second),
 		base: base,
-	}
-}
-
-func (p *yesCaptcha) SetProxy(proxyURL string) {
-	if proxyURL != "" {
-		p.http.SetProxy(proxyURL)
 	}
 }
 

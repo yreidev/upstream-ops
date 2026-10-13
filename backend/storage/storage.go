@@ -10,28 +10,13 @@ import (
 	"time"
 
 	sqliteDriver "github.com/glebarez/sqlite"
-	mysqlDriver "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-type DBDriver string
-
-const (
-	DBDriverSQLite DBDriver = "sqlite"
-	DBDriverMySQL  DBDriver = "mysql"
-)
-
+// DBConfig 是 SQLite 数据库配置。
 type DBConfig struct {
-	Driver       DBDriver
-	Path         string
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	Name         string
-	MaxOpenConns int
-	MaxIdleConns int
+	Path string
 }
 
 func (c DBConfig) SQLitePath() string {
@@ -39,13 +24,6 @@ func (c DBConfig) SQLitePath() string {
 		return c.Path
 	}
 	return "./data/upstream-ops.db"
-}
-
-func (c DBConfig) MySQLDSN() string {
-	return fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		c.User, c.Password, c.Host, c.Port, c.Name,
-	)
 }
 
 // newGormLogger 关掉 GORM 默认 logger 对 ErrRecordNotFound 的告警噪音。
@@ -66,26 +44,12 @@ func newGormLogger() logger.Interface {
 }
 
 func Open(cfg DBConfig) (*gorm.DB, error) {
-	driver := DBDriver(strings.ToLower(string(cfg.Driver)))
-	if driver == "" {
-		driver = DBDriverSQLite
+	path := cfg.SQLitePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create sqlite dir: %w", err)
 	}
 
-	var dialector gorm.Dialector
-	switch driver {
-	case DBDriverSQLite:
-		path := cfg.SQLitePath()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, fmt.Errorf("create sqlite dir: %w", err)
-		}
-		dialector = sqliteDriver.Open(path)
-	case DBDriverMySQL:
-		dialector = mysqlDriver.Open(cfg.MySQLDSN())
-	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
-	}
-
-	db, err := gorm.Open(dialector, &gorm.Config{
+	db, err := gorm.Open(sqliteDriver.Open(path), &gorm.Config{
 		Logger: newGormLogger(),
 	})
 	if err != nil {
@@ -96,20 +60,14 @@ func Open(cfg DBConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("get sql.DB: %w", err)
 	}
 
-	switch driver {
-	case DBDriverSQLite:
-		if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
-			return nil, fmt.Errorf("set sqlite journal mode: %w", err)
-		}
-		if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
-			return nil, fmt.Errorf("set sqlite busy timeout: %w", err)
-		}
-		sqlDB.SetMaxOpenConns(1)
-		sqlDB.SetMaxIdleConns(1)
-	default:
-		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
+		return nil, fmt.Errorf("set sqlite journal mode: %w", err)
 	}
+	if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
+		return nil, fmt.Errorf("set sqlite busy timeout: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 
 	return db, nil
 }
@@ -122,7 +80,18 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := dropObsoleteRateSiteColumns(db); err != nil {
 		return err
 	}
-	// 仅 AutoMigrate 当前模型（网关未发布，不做「密钥→组」等历史数据迁移）
+	if err := dropRemovedFeatureTables(db); err != nil {
+		return err
+	}
+	if err := dropRemovedFeatureColumns(db); err != nil {
+		return err
+	}
+	if err := deleteRemovedNotificationChannels(db); err != nil {
+		return err
+	}
+	if err := deleteRemovedCaptchaConfigs(db); err != nil {
+		return err
+	}
 	if err := db.AutoMigrate(
 		&Channel{},
 		&AuthSession{},
@@ -136,12 +105,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&NotificationLog{},
 		&NotificationCooldown{},
 		&MonitorLog{},
-		&GatewayGroup{},
-		&GatewayKey{},
-		&GatewayRoute{},
-		&GatewayProvider{},
-		&GatewayUsageLog{},
-		&ModelPriceOverride{},
 	); err != nil {
 		return err
 	}
@@ -156,8 +119,7 @@ func AutoMigrate(db *gorm.DB) error {
 // 同一轮采集写入）；快照已被清理的，退回当时的 last_balance_at。两者都没有的保持 NULL，
 // EffectiveTodayCost 原样返回。
 //
-// 只处理 today_cost_at IS NULL 的行，重复执行无副作用；子查询读的是另一张表，
-// SQLite 与 MySQL 的 UPDATE 都支持。
+// 只处理 today_cost_at IS NULL 的行，重复执行无副作用。
 func backfillChannelTodayCostAt(db *gorm.DB) error {
 	const pending = "today_cost_at IS NULL AND today_cost IS NOT NULL"
 	if err := db.Exec("UPDATE channels SET today_cost_at = (" +
@@ -199,11 +161,92 @@ func dropObsoleteRateSiteColumns(db *gorm.DB) error {
 		if err != nil {
 			return fmt.Errorf("inspect obsolete %s.site_id after drop: %w", target.table, err)
 		}
-		if hasColumn && db.Dialector.Name() == "sqlite" {
+		if hasColumn {
 			if err := db.Exec("ALTER TABLE " + target.table + " DROP COLUMN site_id").Error; err != nil {
-				return fmt.Errorf("drop sqlite obsolete %s.site_id: %w", target.table, err)
+				return fmt.Errorf("drop obsolete %s.site_id via raw sql: %w", target.table, err)
 			}
 		}
+	}
+	return nil
+}
+
+// removedFeatureTables 是已移除的请求网关留下的表，启动时直接删除。
+var removedFeatureTables = []string{
+	"gateway_usage_logs",
+	"gateway_routes",
+	"gateway_keys",
+	"gateway_groups",
+	"gateway_providers",
+	"model_price_overrides",
+}
+
+func dropRemovedFeatureTables(db *gorm.DB) error {
+	for _, table := range removedFeatureTables {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		if err := db.Migrator().DropTable(table); err != nil {
+			return fmt.Errorf("drop removed table %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// dropRemovedFeatureColumns 删除已移除功能（订阅管理、全局代理）留下的列。
+func dropRemovedFeatureColumns(db *gorm.DB) error {
+	targets := []struct {
+		table  string
+		column string
+	}{
+		{table: "channels", column: "subscription_enabled"},
+		{table: "channels", column: "proxy_enabled"},
+		{table: "captcha_configs", column: "proxy_enabled"},
+		{table: "notification_channels", column: "proxy_enabled"},
+	}
+	for _, target := range targets {
+		if !db.Migrator().HasTable(target.table) {
+			continue
+		}
+		hasColumn, err := tableHasColumn(db, target.table, target.column)
+		if err != nil {
+			return fmt.Errorf("inspect removed %s.%s: %w", target.table, target.column, err)
+		}
+		if !hasColumn {
+			continue
+		}
+		if err := db.Exec("ALTER TABLE " + target.table + " DROP COLUMN " + target.column).Error; err != nil {
+			return fmt.Errorf("drop removed %s.%s: %w", target.table, target.column, err)
+		}
+	}
+	return nil
+}
+
+// deleteRemovedNotificationChannels 删除已不再支持的通知渠道类型。
+// 与手动删除通知渠道一致，发送记录保留，按保留天数自然清理。
+func deleteRemovedNotificationChannels(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&NotificationChannel{}) {
+		return nil
+	}
+	supported := []NotificationChannelType{NotifyTelegram, NotifyWecom}
+	if err := db.Exec("DELETE FROM notification_channels WHERE type NOT IN ?", supported).Error; err != nil {
+		return fmt.Errorf("delete removed notification channels: %w", err)
+	}
+	return nil
+}
+
+// deleteRemovedCaptchaConfigs 删除已不再支持的打码平台配置，引用它们的渠道改为不使用打码。
+func deleteRemovedCaptchaConfigs(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&CaptchaConfig{}) {
+		return nil
+	}
+	supported := []CaptchaProviderType{CaptchaYesCaptcha}
+	if db.Migrator().HasTable(&Channel{}) {
+		if err := db.Exec("UPDATE channels SET captcha_config_id = NULL WHERE captcha_config_id IN (SELECT id FROM captcha_configs WHERE type NOT IN ?)", supported).Error; err != nil {
+			return fmt.Errorf("unbind removed captcha configs: %w", err)
+		}
+	}
+	if err := db.Exec("DELETE FROM captcha_configs WHERE type NOT IN ?", supported).Error; err != nil {
+		return fmt.Errorf("delete removed captcha configs: %w", err)
 	}
 	return nil
 }
@@ -244,9 +287,9 @@ func dropDeletedAtColumns(db *gorm.DB) error {
 		if err != nil {
 			return fmt.Errorf("inspect %s.deleted_at after drop: %w", target.table, err)
 		}
-		if hasColumn && db.Dialector.Name() == "sqlite" {
+		if hasColumn {
 			if err := db.Exec("ALTER TABLE " + target.table + " DROP COLUMN deleted_at").Error; err != nil {
-				return fmt.Errorf("drop sqlite %s.deleted_at: %w", target.table, err)
+				return fmt.Errorf("drop %s.deleted_at via raw sql: %w", target.table, err)
 			}
 		}
 	}

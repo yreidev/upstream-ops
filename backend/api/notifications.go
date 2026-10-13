@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/bejix/upstream-ops/backend/notify"
@@ -98,7 +99,6 @@ type notifyChannelInput struct {
 	Config        string                          `json:"config"` // JSON string；编辑时可留空保留原值
 	Subscriptions string                          `json:"subscriptions"`
 	Enabled       bool                            `json:"enabled"`
-	ProxyEnabled  bool                            `json:"proxy_enabled"`
 }
 
 // normalizeSubscriptions 把输入的订阅 JSON 字符串规整为 "[]" 或合法订阅规则数组。
@@ -124,6 +124,10 @@ func createNotifyChannel(c *gin.Context, d *Deps) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
+	if !notify.Supported(in.Type) {
+		fail(c, http.StatusBadRequest, fmt.Errorf("unsupported notification channel type: %s", in.Type))
+		return
+	}
 	if in.Config == "" {
 		fail(c, http.StatusBadRequest, errors.New("config is required"))
 		return
@@ -144,7 +148,6 @@ func createNotifyChannel(c *gin.Context, d *Deps) {
 		ConfigCipher:  cipherCfg,
 		Subscriptions: subs,
 		Enabled:       in.Enabled,
-		ProxyEnabled:  in.ProxyEnabled,
 	}
 	if err := d.Notifies.CreateChannel(ch); err != nil {
 		fail(c, http.StatusInternalServerError, err)
@@ -169,6 +172,10 @@ func updateNotifyChannel(c *gin.Context, d *Deps) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
+	if !notify.Supported(in.Type) {
+		fail(c, http.StatusBadRequest, fmt.Errorf("unsupported notification channel type: %s", in.Type))
+		return
+	}
 	subs, err := normalizeSubscriptions(in.Subscriptions)
 	if err != nil {
 		fail(c, http.StatusBadRequest, err)
@@ -177,7 +184,6 @@ func updateNotifyChannel(c *gin.Context, d *Deps) {
 	ch.Name = in.Name
 	ch.Type = in.Type
 	ch.Enabled = in.Enabled
-	ch.ProxyEnabled = in.ProxyEnabled
 	ch.Subscriptions = subs
 	if in.Config != "" {
 		cipherCfg, err := d.Cipher.Encrypt(in.Config)

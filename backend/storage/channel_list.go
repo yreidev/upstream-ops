@@ -26,7 +26,7 @@ const (
 
 // 渠道列表的排序字段。
 //
-// name / username 需要按拼音排中文，SQLite / MySQL 的默认排序规则都做不到（只按码点），
+// name / username 需要按拼音排中文，SQLite 的默认排序规则做不到（只按码点），
 // 所以这两种排序在 Go 里做（见 sortChannelsByText）；其余排序仍由 SQL 完成。
 const (
 	ChannelSortDefault  = "default"  // sort_order DESC, id ASC（原有顺序），忽略 Order
@@ -51,9 +51,7 @@ const MaxChannelListQueryRunes = 200
 // 各字段都来自用户输入：Query / Tag 只作为 LIKE 参数绑定；Status / Sort / Order
 // 只用于从白名单里挑选预先写好的 SQL 片段，绝不拼接进 SQL。
 //
-// Query / Tag 的大小写只折叠 ASCII 字母（见 lowerASCII）。MySQL 默认的 *_ci 排序规则
-// 在 LIKE 比较时还会忽略其它字母的大小写、重音和全半角（如 tag=Ärger 也会命中 ärger），
-// 这个差异可以接受，不做特殊处理。
+// Query / Tag 的大小写只折叠 ASCII 字母（见 lowerASCII），与 SQLite LOWER() 一致。
 type ChannelListFilter struct {
 	Query  string // 名称 / 账号 / 站点地址 / 备注 / 标签的子串搜索，最多 MaxChannelListQueryRunes 个字符
 	Status string // ChannelStatus*，空表示不限
@@ -163,8 +161,7 @@ func applyChannelListFilter(q *gorm.DB, f ChannelListFilter) *gorm.DB {
 	}
 	if f.Tag != "" {
 		// tags 以 ",a,b," 形式存储（见 ChannelTags），首尾带分隔符才能精确匹配单个标签，
-		// 避免 "a" 误中 "ab"。在 SQLite 上只折叠 ASCII 大小写，与标签去重规则一致；
-		// MySQL 的 *_ci 排序规则会折叠得更宽（见 ChannelListFilter）。
+		// 避免 "a" 误中 "ab"。只折叠 ASCII 大小写，与标签去重规则一致。
 		q = q.Where("LOWER(COALESCE(tags, '')) LIKE ? ESCAPE '!'", "%,"+likeEscaper.Replace(lowerASCII(f.Tag))+",%")
 	}
 	if scope, ok := channelStatusScopes[f.Status]; ok {

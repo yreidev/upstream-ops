@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/config"
 	"github.com/bejix/upstream-ops/backend/crypto"
 	"github.com/bejix/upstream-ops/backend/storage"
 )
@@ -20,7 +19,6 @@ type Dispatcher struct {
 	log      *slog.Logger
 	mu       sync.RWMutex
 	policy   Policy
-	proxy    config.ProxyConfig
 	cooldown CooldownStore
 }
 
@@ -61,19 +59,6 @@ func (d *Dispatcher) UpdatePolicy(policy Policy) {
 	d.mu.Unlock()
 }
 
-func (d *Dispatcher) UpdateProxyConfig(cfg config.ProxyConfig) {
-	d.mu.Lock()
-	d.proxy = cfg
-	d.mu.Unlock()
-}
-
-func (d *Dispatcher) proxyURL() (string, error) {
-	d.mu.RLock()
-	cfg := d.proxy
-	d.mu.RUnlock()
-	return cfg.ActiveURL()
-}
-
 // Send 把消息发送到一个具体的渠道（用于"测试发送"按钮）。
 // 不走 Policy 过滤 / 不走重试——测试场景要求快速反馈，失败立刻显示出来。
 func (d *Dispatcher) Send(ctx context.Context, ch *storage.NotificationChannel, msg Message) error {
@@ -84,9 +69,6 @@ func (d *Dispatcher) Send(ctx context.Context, ch *storage.NotificationChannel, 
 	}
 	n, err := Build(ch, cfgJSON)
 	if err != nil {
-		return err
-	}
-	if err := d.applyProxy(ch, n); err != nil {
 		return err
 	}
 	err = n.Send(ctx, msg)
@@ -176,8 +158,6 @@ func (d *Dispatcher) suppress(msg Message) bool {
 	switch msg.Event {
 	case storage.EventBalanceLow:
 		cooldown = policy.BalanceLowCooldown
-	case storage.EventSubscriptionDailyLow, storage.EventSubscriptionWeeklyLow, storage.EventSubscriptionMonthlyLow, storage.EventSubscriptionExpiring:
-		cooldown = policy.SubscriptionAlertCooldown
 	default:
 		return false
 	}
@@ -244,34 +224,11 @@ func (d *Dispatcher) sendOne(ctx context.Context, ch *storage.NotificationChanne
 		d.logResult(ch.ID, msg, err)
 		return fmt.Errorf("build %s: %w", ch.Name, err)
 	}
-	if err := d.applyProxy(ch, n); err != nil {
-		d.logResult(ch.ID, msg, err)
-		return fmt.Errorf("proxy %s: %w", ch.Name, err)
-	}
 	sendErr := d.sendWithRetry(ctx, ch.Name, n, msg)
 	d.logResult(ch.ID, msg, sendErr)
 	if sendErr != nil {
 		return fmt.Errorf("send via %s: %w", ch.Name, sendErr)
 	}
-	return nil
-}
-
-func (d *Dispatcher) applyProxy(ch *storage.NotificationChannel, n Notifier) error {
-	if ch == nil || !ch.ProxyEnabled {
-		return nil
-	}
-	proxyURL, err := d.proxyURL()
-	if err != nil {
-		return err
-	}
-	if proxyURL == "" {
-		return nil
-	}
-	setter, ok := n.(ProxySetter)
-	if !ok {
-		return nil
-	}
-	setter.SetProxy(proxyURL)
 	return nil
 }
 

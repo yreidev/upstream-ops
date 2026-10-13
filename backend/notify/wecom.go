@@ -35,12 +35,6 @@ func newWecom(raw string) (*wecom, error) {
 
 func (w *wecom) Type() storage.NotificationChannelType { return storage.NotifyWecom }
 
-func (w *wecom) SetProxy(proxyURL string) {
-	if proxyURL != "" {
-		w.http.SetProxy(proxyURL)
-	}
-}
-
 func (w *wecom) Send(ctx context.Context, msg Message) error {
 	resp, err := w.http.R().
 		SetContext(ctx).

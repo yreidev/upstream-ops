@@ -41,13 +41,6 @@ func New() *Client {
 	return &Client{http: c}
 }
 
-func (c *Client) SetProxy(proxyURL string) {
-	if strings.TrimSpace(proxyURL) == "" {
-		return
-	}
-	c.http.SetProxy(proxyURL)
-}
-
 func (c *Client) SetHTTPConfig(cfg connector.HTTPConfig) {
 	if cfg.Timeout > 0 {
 		c.http.SetTimeout(cfg.Timeout)
@@ -646,18 +639,6 @@ func (c *Client) CreateRecharge(ctx context.Context, ch *connector.Channel, sess
 		FormAction: action,
 		FormFields: fields,
 	}, nil
-}
-
-func (c *Client) GetSubscriptionInfo(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) (*connector.SubscriptionInfo, error) {
-	return nil, errors.New("newapi 不支持订阅购买")
-}
-
-func (c *Client) CreateSubscription(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, req connector.SubscriptionRequest) (*connector.SubscriptionLaunch, error) {
-	return nil, errors.New("newapi 不支持订阅购买")
-}
-
-func (c *Client) GetSubscriptionUsage(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) (*connector.SubscriptionUsageInfo, error) {
-	return nil, errors.New("newapi 不支持订阅用量")
 }
 
 func (c *Client) ListAPIKeys(ctx context.Context, ch *connector.Channel, session *connector.AuthSession, query connector.APIKeyQuery) (*connector.APIKeyPage, error) {

@@ -56,7 +56,7 @@ func TestSubscriptionMatchesSpecifiedEventsAndGroups(t *testing.T) {
 		Groups:     []string{"beta"},
 		Events: []storage.NotificationEvent{
 			storage.EventRateChanged,
-			storage.EventSubscriptionExpiring,
+			storage.EventLoginFailed,
 		},
 	}
 
@@ -66,7 +66,7 @@ func TestSubscriptionMatchesSpecifiedEventsAndGroups(t *testing.T) {
 	if sub.Matches(Message{ChannelID: 1, Event: storage.EventRateChanged, ModelName: "gamma"}) {
 		t.Fatal("subscription should reject selected rate event with unselected group")
 	}
-	if !sub.Matches(Message{ChannelID: 1, Event: storage.EventSubscriptionExpiring}) {
+	if !sub.Matches(Message{ChannelID: 1, Event: storage.EventLoginFailed}) {
 		t.Fatal("subscription should match selected non-rate event without group")
 	}
 	if sub.Matches(Message{ChannelID: 1, Event: storage.EventAnnouncement}) {

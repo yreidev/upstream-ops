@@ -49,24 +49,8 @@ interface ConfigState {
   // telegram
   bot_token: string
   chat_id: string
-  // webhook
-  url: string
-  method: string
-  headers: string // 原始 JSON 字符串，留空 = 不传
-  // email
-  host: string
-  port: string
-  username: string
-  password: string
-  from: string
-  to: string // 逗号分隔
-  use_tls: boolean
-  // wecom / dingtalk / feishu
+  // wecom
   webhook_url: string
-  secret: string
-  // Server酱³
-  serverchan3_uid: string
-  serverchan3_sendkey: string
 }
 
 interface SubRow {
@@ -81,7 +65,6 @@ interface FormState {
   name: string
   type: NotificationChannelType
   enabled: boolean
-  proxy_enabled: boolean
   cfg: ConfigState
   subs: SubRow[]
 }
@@ -90,20 +73,7 @@ function emptyConfig(): ConfigState {
   return {
     bot_token: "",
     chat_id: "",
-    url: "",
-    method: "POST",
-    headers: "",
-    host: "",
-    port: "",
-    username: "",
-    password: "",
-    from: "",
-    to: "",
-    use_tls: false,
     webhook_url: "",
-    secret: "",
-    serverchan3_uid: "",
-    serverchan3_sendkey: "",
   }
 }
 
@@ -119,16 +89,6 @@ const notificationEventOptions: Array<{ id: string; label: string; events: Notif
   { id: "login_failed", label: "登录失败", events: ["login_failed"] },
   { id: "captcha_failed", label: "验证码失败", events: ["captcha_failed"] },
   { id: "monitor_failed", label: "采集失败", events: ["monitor_failed"] },
-  {
-    id: "subscription_notice",
-    label: "订阅通知",
-    events: [
-      "subscription_daily_remaining_low",
-      "subscription_weekly_remaining_low",
-      "subscription_monthly_remaining_low",
-      "subscription_expiring",
-    ],
-  },
 ]
 
 const allNotificationEvents = Array.from(
@@ -174,14 +134,12 @@ function initialState(c?: NotificationChannel | null): FormState {
     name: c?.name ?? "",
     type: c?.type ?? "telegram",
     enabled: c?.enabled ?? true,
-    proxy_enabled: c?.proxy_enabled ?? false,
     cfg: emptyConfig(),
     subs,
   }
 }
 
 // buildConfigByType 把 cfg state 序列化成各 notifier 期望的 JSON。
-// 留空字段会被剔除（除非该字段是必填）。
 function buildConfigByType(type: NotificationChannelType, cfg: ConfigState): string {
   switch (type) {
     case "telegram":
@@ -189,48 +147,8 @@ function buildConfigByType(type: NotificationChannelType, cfg: ConfigState): str
         bot_token: cfg.bot_token,
         chat_id: cfg.chat_id,
       })
-    case "webhook": {
-      const body: Record<string, unknown> = { url: cfg.url }
-      if (cfg.method && cfg.method !== "POST") body.method = cfg.method
-      if (cfg.headers.trim()) {
-        // 验证是合法 JSON object；不是就抛错让用户改
-        const parsed = JSON.parse(cfg.headers)
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          body.headers = parsed
-        } else {
-          throw new Error("headers 必须是 JSON 对象，例如 {\"Authorization\":\"Bearer ...\"}")
-        }
-      }
-      return JSON.stringify(body)
-    }
-    case "email": {
-      const port = Number(cfg.port)
-      if (!Number.isFinite(port) || port <= 0) throw new Error("端口必须是正整数")
-      const to = cfg.to.split(",").map((s) => s.trim()).filter(Boolean)
-      if (to.length === 0) throw new Error("收件人至少一个")
-      return JSON.stringify({
-        host: cfg.host,
-        port,
-        username: cfg.username,
-        password: cfg.password,
-        from: cfg.from,
-        to,
-        use_tls: cfg.use_tls,
-      })
-    }
     case "wecom":
       return JSON.stringify({ webhook_url: cfg.webhook_url })
-    case "dingtalk":
-    case "feishu": {
-      const body: Record<string, unknown> = { webhook_url: cfg.webhook_url }
-      if (cfg.secret) body.secret = cfg.secret
-      return JSON.stringify(body)
-    }
-    case "serverchan3":
-      return JSON.stringify({
-        uid: cfg.serverchan3_uid,
-        sendkey: cfg.serverchan3_sendkey,
-      })
   }
 }
 
@@ -299,13 +217,7 @@ export function NotificationFormDialog({
         switch (form.type) {
           case "telegram":
             return !!(form.cfg.bot_token || form.cfg.chat_id)
-          case "webhook":
-            return !!form.cfg.url
-          case "email":
-            return !!(form.cfg.host || form.cfg.from || form.cfg.to)
-          case "serverchan3":
-            return !!(form.cfg.serverchan3_uid || form.cfg.serverchan3_sendkey)
-          default:
+          case "wecom":
             return !!form.cfg.webhook_url
         }
       })()
@@ -331,7 +243,6 @@ export function NotificationFormDialog({
         name: form.name,
         type: form.type,
         enabled: form.enabled,
-        proxy_enabled: form.proxy_enabled,
         subscriptions,
       }
       if (configJSON) body.config = configJSON
@@ -394,12 +305,7 @@ export function NotificationFormDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="telegram">Telegram</SelectItem>
-                <SelectItem value="webhook">Webhook</SelectItem>
-                <SelectItem value="email">Email</SelectItem>
                 <SelectItem value="wecom">企业微信</SelectItem>
-                <SelectItem value="dingtalk">钉钉</SelectItem>
-                <SelectItem value="feishu">飞书</SelectItem>
-                <SelectItem value="serverchan3">Server酱³</SelectItem>
               </SelectContent>
             </Select>
             {isEdit ? (
@@ -423,18 +329,6 @@ export function NotificationFormDialog({
             <Switch
               checked={form.enabled}
               onCheckedChange={(v) => setForm({ ...form, enabled: v })}
-              disabled={submitting}
-            />
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-            <div>
-              <p className="text-sm font-medium">启用代理 IP</p>
-              <p className="text-xs text-muted-foreground">全局代理启用后，此通知渠道请求走系统代理配置</p>
-            </div>
-            <Switch
-              checked={form.proxy_enabled}
-              onCheckedChange={(v) => setForm({ ...form, proxy_enabled: v })}
               disabled={submitting}
             />
           </div>
@@ -551,181 +445,10 @@ function ConfigFields({ type, cfg, updateCfg, disabled, isEdit }: ConfigFieldsPr
     )
   }
 
-  if (type === "webhook") {
-    return (
-      <div className="space-y-2 rounded-lg border border-border p-3">
-        <p className="text-xs font-medium text-muted-foreground">Webhook</p>
-        <div className="space-y-1.5">
-          <Label htmlFor="wh-url">URL</Label>
-          <Input
-            id="wh-url"
-            placeholder="https://example.com/hook"
-            value={cfg.url}
-            onChange={(e) => updateCfg({ url: e.target.value })}
-            required={!isEdit}
-            disabled={disabled}
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="wh-method">Method</Label>
-            <Select
-              value={cfg.method || "POST"}
-              onValueChange={(v) => updateCfg({ method: v })}
-              disabled={disabled}
-            >
-              <SelectTrigger id="wh-method">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="POST">POST</SelectItem>
-                <SelectItem value="PUT">PUT</SelectItem>
-                <SelectItem value="GET">GET</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="wh-headers">Headers (JSON, 可选)</Label>
-            <Input
-              id="wh-headers"
-              placeholder='{"Authorization":"Bearer xxx"}'
-              value={cfg.headers}
-              onChange={(e) => updateCfg({ headers: e.target.value })}
-              disabled={disabled}
-            />
-          </div>
-        </div>
-        {hint}
-      </div>
-    )
-  }
-
-  if (type === "email") {
-    return (
-      <div className="space-y-2 rounded-lg border border-border p-3">
-        <p className="text-xs font-medium text-muted-foreground">Email (SMTP)</p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="em-host">Host</Label>
-            <Input
-              id="em-host"
-              placeholder="smtp.example.com"
-              value={cfg.host}
-              onChange={(e) => updateCfg({ host: e.target.value })}
-              required={!isEdit}
-              disabled={disabled}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="em-port">Port</Label>
-            <Input
-              id="em-port"
-              type="number"
-              placeholder="465"
-              value={cfg.port}
-              onChange={(e) => updateCfg({ port: e.target.value })}
-              required={!isEdit}
-              disabled={disabled}
-            />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="em-user">Username</Label>
-            <Input
-              id="em-user"
-              value={cfg.username}
-              onChange={(e) => updateCfg({ username: e.target.value })}
-              disabled={disabled}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="em-pass">Password</Label>
-            <Input
-              id="em-pass"
-              type="password"
-              value={cfg.password}
-              onChange={(e) => updateCfg({ password: e.target.value })}
-              disabled={disabled}
-            />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="em-from">From</Label>
-          <Input
-            id="em-from"
-            placeholder="alert@example.com"
-            value={cfg.from}
-            onChange={(e) => updateCfg({ from: e.target.value })}
-            required={!isEdit}
-            disabled={disabled}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="em-to">To (逗号分隔多个)</Label>
-          <Input
-            id="em-to"
-            placeholder="a@x.com, b@x.com"
-            value={cfg.to}
-            onChange={(e) => updateCfg({ to: e.target.value })}
-            required={!isEdit}
-            disabled={disabled}
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <Label htmlFor="em-tls" className="text-sm font-normal">
-            隐式 TLS (一般 465 端口开启)
-          </Label>
-          <Switch
-            id="em-tls"
-            checked={cfg.use_tls}
-            onCheckedChange={(v) => updateCfg({ use_tls: v })}
-            disabled={disabled}
-          />
-        </div>
-        {hint}
-      </div>
-    )
-  }
-
-  if (type === "serverchan3") {
-    return (
-      <div className="space-y-2 rounded-lg border border-border p-3">
-        <p className="text-xs font-medium text-muted-foreground">Server酱³</p>
-        <div className="space-y-1.5">
-          <Label htmlFor="sc3-uid">UID</Label>
-          <Input
-            id="sc3-uid"
-            placeholder="例如：SC3xxxx"
-            value={cfg.serverchan3_uid}
-            onChange={(e) => updateCfg({ serverchan3_uid: e.target.value })}
-            required={!isEdit}
-            disabled={disabled}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sc3-sendkey">SendKey</Label>
-          <Input
-            id="sc3-sendkey"
-            type="password"
-            value={cfg.serverchan3_sendkey}
-            onChange={(e) => updateCfg({ serverchan3_sendkey: e.target.value })}
-            required={!isEdit}
-            disabled={disabled}
-          />
-        </div>
-        {hint}
-      </div>
-    )
-  }
-
-  // wecom / dingtalk / feishu
-  const supportsSecret = type === "dingtalk" || type === "feishu"
+  // wecom
   return (
     <div className="space-y-2 rounded-lg border border-border p-3">
-      <p className="text-xs font-medium text-muted-foreground">
-        {type === "wecom" ? "企业微信" : type === "dingtalk" ? "钉钉" : "飞书"}
-      </p>
+      <p className="text-xs font-medium text-muted-foreground">企业微信</p>
       <div className="space-y-1.5">
         <Label htmlFor="wb-url">Webhook URL</Label>
         <Input
@@ -736,18 +459,6 @@ function ConfigFields({ type, cfg, updateCfg, disabled, isEdit }: ConfigFieldsPr
           disabled={disabled}
         />
       </div>
-      {supportsSecret ? (
-        <div className="space-y-1.5">
-          <Label htmlFor="wb-secret">Secret (可选, HMAC 签名)</Label>
-          <Input
-            id="wb-secret"
-            type="password"
-            value={cfg.secret}
-            onChange={(e) => updateCfg({ secret: e.target.value })}
-            disabled={disabled}
-          />
-        </div>
-      ) : null}
       {hint}
     </div>
   )

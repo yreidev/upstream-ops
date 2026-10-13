@@ -1,4 +1,4 @@
-// Package config 定义应用配置结构体与默认值（含 gateway 运行时参数）。
+// Package config 定义应用配置结构体与默认值。
 package config
 
 import (
@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/spf13/viper"
@@ -21,10 +20,7 @@ type Config struct {
 	Auth          AuthConfig          `mapstructure:"auth" yaml:"auth" json:"auth"`
 	Scheduler     SchedulerConfig     `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler"`
 	Notifications NotificationsConfig `mapstructure:"notifications" yaml:"notifications" json:"notifications"`
-	Proxy         ProxyConfig         `mapstructure:"proxy" yaml:"proxy" json:"proxy"`
 	Upstream      UpstreamConfig      `mapstructure:"upstream" yaml:"upstream" json:"upstream"`
-	Gateway       GatewayConfig       `mapstructure:"gateway" yaml:"gateway" json:"gateway"`
-	Pricing       PricingConfig       `mapstructure:"pricing" yaml:"pricing" json:"pricing"`
 	Log           LogConfig           `mapstructure:"log" yaml:"log" json:"log"`
 }
 
@@ -40,30 +36,13 @@ type ServerConfig struct {
 	BaseURL        string   `mapstructure:"baseURL" yaml:"baseURL" json:"baseURL"`
 }
 
+// DatabaseConfig SQLite 数据库配置。
 type DatabaseConfig struct {
-	Driver       string `mapstructure:"driver" yaml:"driver" json:"driver"`
-	Path         string `mapstructure:"path" yaml:"path" json:"path"`
-	Host         string `mapstructure:"host" yaml:"host" json:"host"`
-	Port         int    `mapstructure:"port" yaml:"port" json:"port"`
-	User         string `mapstructure:"user" yaml:"user" json:"user"`
-	Password     string `mapstructure:"password" yaml:"password" json:"password"`
-	Name         string `mapstructure:"name" yaml:"name" json:"name"`
-	MaxOpenConns int    `mapstructure:"maxOpenConns" yaml:"maxOpenConns" json:"maxOpenConns"`
-	MaxIdleConns int    `mapstructure:"maxIdleConns" yaml:"maxIdleConns" json:"maxIdleConns"`
+	Path string `mapstructure:"path" yaml:"path" json:"path"`
 }
 
 func (d DatabaseConfig) ToStorageConfig() storage.DBConfig {
-	return storage.DBConfig{
-		Driver:       storage.DBDriver(d.Driver),
-		Path:         d.Path,
-		Host:         d.Host,
-		Port:         d.Port,
-		User:         d.User,
-		Password:     d.Password,
-		Name:         d.Name,
-		MaxOpenConns: d.MaxOpenConns,
-		MaxIdleConns: d.MaxIdleConns,
-	}
+	return storage.DBConfig{Path: d.Path}
 }
 
 type SecurityConfig struct {
@@ -115,86 +94,19 @@ type RetentionConfig struct {
 //   - SendMaxAttempts：单条通知发送失败时最多尝试次数（含首次）。
 //     1 = 不重试。重试采用指数退避：1s / 2s / 4s …，上限 30s。
 type NotificationsConfig struct {
-	MinChangePct                             float64 `mapstructure:"minChangePct" yaml:"minChangePct" json:"minChangePct"`
-	BalanceLowCooldownMinutes                int     `mapstructure:"balanceLowCooldownMinutes" yaml:"balanceLowCooldownMinutes" json:"balanceLowCooldownMinutes"`
-	SubscriptionDailyRemainingThresholdPct   float64 `mapstructure:"subscriptionDailyRemainingThresholdPct" yaml:"subscriptionDailyRemainingThresholdPct" json:"subscriptionDailyRemainingThresholdPct"`
-	SubscriptionWeeklyRemainingThresholdPct  float64 `mapstructure:"subscriptionWeeklyRemainingThresholdPct" yaml:"subscriptionWeeklyRemainingThresholdPct" json:"subscriptionWeeklyRemainingThresholdPct"`
-	SubscriptionMonthlyRemainingThresholdPct float64 `mapstructure:"subscriptionMonthlyRemainingThresholdPct" yaml:"subscriptionMonthlyRemainingThresholdPct" json:"subscriptionMonthlyRemainingThresholdPct"`
-	SubscriptionExpiryThresholdHours         int     `mapstructure:"subscriptionExpiryThresholdHours" yaml:"subscriptionExpiryThresholdHours" json:"subscriptionExpiryThresholdHours"`
-	SubscriptionAlertCooldownMinutes         int     `mapstructure:"subscriptionAlertCooldownMinutes" yaml:"subscriptionAlertCooldownMinutes" json:"subscriptionAlertCooldownMinutes"`
-	SendMaxAttempts                          int     `mapstructure:"sendMaxAttempts" yaml:"sendMaxAttempts" json:"sendMaxAttempts"`
-}
-
-type ProxyConfig struct {
-	Enabled             bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	VersionCheckEnabled bool   `mapstructure:"versionCheckEnabled" yaml:"versionCheckEnabled" json:"versionCheckEnabled"`
-	Protocol            string `mapstructure:"protocol" yaml:"protocol" json:"protocol"`
-	Host                string `mapstructure:"host" yaml:"host" json:"host"`
-	Port                int    `mapstructure:"port" yaml:"port" json:"port"`
-	Username            string `mapstructure:"username" yaml:"username" json:"username"`
-	Password            string `mapstructure:"password" yaml:"password" json:"password"`
+	MinChangePct              float64 `mapstructure:"minChangePct" yaml:"minChangePct" json:"minChangePct"`
+	BalanceLowCooldownMinutes int     `mapstructure:"balanceLowCooldownMinutes" yaml:"balanceLowCooldownMinutes" json:"balanceLowCooldownMinutes"`
+	SendMaxAttempts           int     `mapstructure:"sendMaxAttempts" yaml:"sendMaxAttempts" json:"sendMaxAttempts"`
 }
 
 const (
 	DefaultUpstreamTimeoutSeconds = 30
 	DefaultUpstreamUserAgent      = "upstream-ops/0.1"
-
-	// 网关默认值（设置页可改；0/空表示使用下列默认）。
-	DefaultGatewayTempPauseSeconds           = 30
-	DefaultGatewayForwardTimeoutSeconds      = 600 // 10 分钟
-	DefaultGatewayModelsCacheTTLSeconds      = 60
-	DefaultGatewayMaxFailoverSwitches        = 8
-	DefaultGatewayRouteBatchConcurrency      = 8
-	DefaultGatewayUsageErrorBodyBytes        = 32 * 1024
-	DefaultGatewayUsageErrorMsgRunes         = 500
-	DefaultGatewayUsageErrorHeaderValueRunes = 8 * 1024
-	DefaultGatewayUsageErrorHeadersJSONBytes = 64 * 1024
-	DefaultGatewayStreamKeepaliveSeconds     = 15
-	DefaultGatewayStreamIdleTimeoutSeconds   = 120
-	DefaultGatewayStreamMaxLineBytes         = 8 << 20
 )
 
 type UpstreamConfig struct {
 	TimeoutSeconds int    `mapstructure:"timeoutSeconds" yaml:"timeoutSeconds" json:"timeoutSeconds"`
 	UserAgent      string `mapstructure:"userAgent" yaml:"userAgent" json:"userAgent"`
-}
-
-// PricingConfig 是网关模型价目表的远程同步配置。
-type PricingConfig struct {
-	Enabled                  bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
-	RemoteURL                string `mapstructure:"remoteURL" yaml:"remoteURL" json:"remoteURL"`
-	HashURL                  string `mapstructure:"hashURL" yaml:"hashURL" json:"hashURL"`
-	DataDir                  string `mapstructure:"dataDir" yaml:"dataDir" json:"dataDir"`
-	FallbackFile             string `mapstructure:"fallbackFile" yaml:"fallbackFile" json:"fallbackFile"`
-	UpdateIntervalHours      int    `mapstructure:"updateIntervalHours" yaml:"updateIntervalHours" json:"updateIntervalHours"`
-	HashCheckIntervalMinutes int    `mapstructure:"hashCheckIntervalMinutes" yaml:"hashCheckIntervalMinutes" json:"hashCheckIntervalMinutes"`
-}
-
-const (
-	DefaultPricingRemoteURL = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json"
-	DefaultPricingHashURL   = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256"
-)
-
-func (p PricingConfig) WithDefaults() PricingConfig {
-	if strings.TrimSpace(p.RemoteURL) == "" {
-		p.RemoteURL = DefaultPricingRemoteURL
-	}
-	if strings.TrimSpace(p.HashURL) == "" {
-		p.HashURL = DefaultPricingHashURL
-	}
-	if strings.TrimSpace(p.DataDir) == "" {
-		p.DataDir = "./data"
-	}
-	if strings.TrimSpace(p.FallbackFile) == "" {
-		p.FallbackFile = "./backend/gateway/pricing/default_prices.json"
-	}
-	if p.UpdateIntervalHours <= 0 {
-		p.UpdateIntervalHours = 24
-	}
-	if p.HashCheckIntervalMinutes <= 0 {
-		p.HashCheckIntervalMinutes = 10
-	}
-	return p
 }
 
 func (u UpstreamConfig) WithDefaults() UpstreamConfig {
@@ -207,104 +119,6 @@ func (u UpstreamConfig) WithDefaults() UpstreamConfig {
 	return u
 }
 
-// GatewayConfig 网关运行时参数（转发超时、批量运维并发、用量错误落库截断等）。
-// 可在设置页保存并「应用配置」后立即生效；字段 ≤0 时回退默认值。
-type GatewayConfig struct {
-	// TempPauseSeconds 新建组默认临时暂停时长（秒），对应路由冷却。
-	TempPauseSeconds int `mapstructure:"tempPauseSeconds" yaml:"tempPauseSeconds" json:"tempPauseSeconds"`
-	// ForwardTimeoutSeconds 单次上游转发/流式 drain 超时（秒）。
-	ForwardTimeoutSeconds int `mapstructure:"forwardTimeoutSeconds" yaml:"forwardTimeoutSeconds" json:"forwardTimeoutSeconds"`
-	// ModelsCacheTTLSeconds 公开 /v1/models 列表缓存 TTL（秒）。
-	ModelsCacheTTLSeconds int `mapstructure:"modelsCacheTTLSeconds" yaml:"modelsCacheTTLSeconds" json:"modelsCacheTTLSeconds"`
-	// MaxFailoverSwitches 新建组默认最大顺延切换次数。
-	MaxFailoverSwitches int `mapstructure:"maxFailoverSwitches" yaml:"maxFailoverSwitches" json:"maxFailoverSwitches"`
-	// RouteBatchConcurrency 批量运维并发（探测模型 / ensure 密钥 / 同步模型 / 拉源分组）。
-	RouteBatchConcurrency int `mapstructure:"routeBatchConcurrency" yaml:"routeBatchConcurrency" json:"routeBatchConcurrency"`
-	// UsageError* 用量错误明细落库截断上限（字节或 rune）。
-	UsageErrorBodyBytes        int `mapstructure:"usageErrorBodyBytes" yaml:"usageErrorBodyBytes" json:"usageErrorBodyBytes"`
-	UsageErrorMsgRunes         int `mapstructure:"usageErrorMsgRunes" yaml:"usageErrorMsgRunes" json:"usageErrorMsgRunes"`
-	UsageErrorHeaderValueRunes int `mapstructure:"usageErrorHeaderValueRunes" yaml:"usageErrorHeaderValueRunes" json:"usageErrorHeaderValueRunes"`
-	UsageErrorHeadersJSONBytes int `mapstructure:"usageErrorHeadersJSONBytes" yaml:"usageErrorHeadersJSONBytes" json:"usageErrorHeadersJSONBytes"`
-	// StreamKeepaliveSeconds 已提交 SSE 流的下游保活间隔（秒）。
-	StreamKeepaliveSeconds int `mapstructure:"streamKeepaliveSeconds" yaml:"streamKeepaliveSeconds" json:"streamKeepaliveSeconds"`
-	// StreamIdleTimeoutSeconds 上游 SSE 收到有效数据后的最大空闲时长（秒）。
-	StreamIdleTimeoutSeconds int `mapstructure:"streamIdleTimeoutSeconds" yaml:"streamIdleTimeoutSeconds" json:"streamIdleTimeoutSeconds"`
-	// StreamMaxLineBytes 上游单条 SSE 行最大字节数。
-	StreamMaxLineBytes int `mapstructure:"streamMaxLineBytes" yaml:"streamMaxLineBytes" json:"streamMaxLineBytes"`
-}
-
-func (g GatewayConfig) WithDefaults() GatewayConfig {
-	if g.TempPauseSeconds <= 0 {
-		g.TempPauseSeconds = DefaultGatewayTempPauseSeconds
-	}
-	if g.ForwardTimeoutSeconds <= 0 {
-		g.ForwardTimeoutSeconds = DefaultGatewayForwardTimeoutSeconds
-	}
-	if g.ModelsCacheTTLSeconds <= 0 {
-		g.ModelsCacheTTLSeconds = DefaultGatewayModelsCacheTTLSeconds
-	}
-	if g.MaxFailoverSwitches <= 0 {
-		g.MaxFailoverSwitches = DefaultGatewayMaxFailoverSwitches
-	}
-	if g.RouteBatchConcurrency <= 0 {
-		g.RouteBatchConcurrency = DefaultGatewayRouteBatchConcurrency
-	}
-	if g.RouteBatchConcurrency > 64 {
-		g.RouteBatchConcurrency = 64
-	}
-	if g.UsageErrorBodyBytes <= 0 {
-		g.UsageErrorBodyBytes = DefaultGatewayUsageErrorBodyBytes
-	}
-	if g.UsageErrorMsgRunes <= 0 {
-		g.UsageErrorMsgRunes = DefaultGatewayUsageErrorMsgRunes
-	}
-	if g.UsageErrorHeaderValueRunes <= 0 {
-		g.UsageErrorHeaderValueRunes = DefaultGatewayUsageErrorHeaderValueRunes
-	}
-	if g.UsageErrorHeadersJSONBytes <= 0 {
-		g.UsageErrorHeadersJSONBytes = DefaultGatewayUsageErrorHeadersJSONBytes
-	}
-	if g.StreamKeepaliveSeconds <= 0 {
-		g.StreamKeepaliveSeconds = DefaultGatewayStreamKeepaliveSeconds
-	}
-	if g.StreamIdleTimeoutSeconds <= 0 {
-		g.StreamIdleTimeoutSeconds = DefaultGatewayStreamIdleTimeoutSeconds
-	}
-	if g.StreamMaxLineBytes <= 0 {
-		g.StreamMaxLineBytes = DefaultGatewayStreamMaxLineBytes
-	}
-	return g
-}
-
-func (g GatewayConfig) TempPause() time.Duration {
-	g = g.WithDefaults()
-	return time.Duration(g.TempPauseSeconds) * time.Second
-}
-
-func (g GatewayConfig) ForwardTimeout() time.Duration {
-	g = g.WithDefaults()
-	return time.Duration(g.ForwardTimeoutSeconds) * time.Second
-}
-
-func (g GatewayConfig) ModelsCacheTTL() time.Duration {
-	g = g.WithDefaults()
-	return time.Duration(g.ModelsCacheTTLSeconds) * time.Second
-}
-
-func (g GatewayConfig) StreamKeepalive() time.Duration {
-	g = g.WithDefaults()
-	return time.Duration(g.StreamKeepaliveSeconds) * time.Second
-}
-
-func (g GatewayConfig) StreamIdleTimeout() time.Duration {
-	g = g.WithDefaults()
-	return time.Duration(g.StreamIdleTimeoutSeconds) * time.Second
-}
-
-func (g GatewayConfig) StreamMaxLineSize() int {
-	return g.WithDefaults().StreamMaxLineBytes
-}
-
 type LogConfig struct {
 	Level  string `mapstructure:"level" yaml:"level" json:"level"`
 	Format string `mapstructure:"format" yaml:"format" json:"format"`
@@ -315,9 +129,7 @@ type LogConfig struct {
 // 关键映射：
 //
 //	APP_SECRET                       -> security.appSecret
-//	DATABASE_DRIVER      -> database.driver
 //	DATABASE_PATH        -> database.path
-//	DATABASE_HOST        -> database.host
 //	SERVER_PORT          -> server.port
 //	SCHEDULER_BALANCECRON-> scheduler.balanceCron
 func Load(path string) (*Config, error) {
@@ -359,16 +171,9 @@ func load(path string, withEnv bool) (*Config, string, error) {
 		_ = v.BindEnv("auth.username", "ADMIN_USERNAME")
 		_ = v.BindEnv("auth.password", "ADMIN_PASSWORD")
 		_ = v.BindEnv("auth.tokenSecret", "AUTH_TOKEN_SECRET")
-		// Viper 坑：AutomaticEnv 只对已通过 SetDefault / BindEnv / 配置文件注册过的 key 生效；
-		// 数据库的 user/password 没有合理的默认值（拒绝写"change-me"作默认），
+		// Viper 坑：AutomaticEnv 只对已通过 SetDefault / BindEnv / 配置文件注册过的 key 生效，
 		// 因此显式 BindEnv 以确保从环境变量读取。
-		_ = v.BindEnv("database.driver", "DATABASE_DRIVER")
 		_ = v.BindEnv("database.path", "DATABASE_PATH")
-		_ = v.BindEnv("database.host", "DATABASE_HOST")
-		_ = v.BindEnv("database.port", "DATABASE_PORT")
-		_ = v.BindEnv("database.user", "DATABASE_USER")
-		_ = v.BindEnv("database.password", "DATABASE_PASSWORD")
-		_ = v.BindEnv("database.name", "DATABASE_NAME")
 		_ = v.BindEnv("server.port", "SERVER_PORT")
 		_ = v.BindEnv("server.mode", "SERVER_MODE")
 		_ = v.BindEnv("log.level", "LOG_LEVEL")
@@ -391,8 +196,6 @@ func load(path string, withEnv bool) (*Config, string, error) {
 		return nil, "", fmt.Errorf("unmarshal config: %w", err)
 	}
 	cfg.Upstream = cfg.Upstream.WithDefaults()
-	cfg.Gateway = cfg.Gateway.WithDefaults()
-	cfg.Pricing = cfg.Pricing.WithDefaults()
 	return cfg, v.ConfigFileUsed(), nil
 }
 
@@ -447,13 +250,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.mode", "debug")
 	v.SetDefault("server.baseURL", "http://localhost:8418")
 
-	v.SetDefault("database.driver", "sqlite")
 	v.SetDefault("database.path", "./data/upstream-ops.db")
-	v.SetDefault("database.host", "localhost")
-	v.SetDefault("database.port", 3306)
-	v.SetDefault("database.name", "upstreamops")
-	v.SetDefault("database.maxOpenConns", 20)
-	v.SetDefault("database.maxIdleConns", 5)
 
 	// CLAUDE.md 默认建议：余额 15 分钟，倍率 30 分钟。
 	v.SetDefault("scheduler.balanceCron", "37 */15 * * * *")
@@ -476,40 +273,10 @@ func setDefaults(v *viper.Viper) {
 	// 全渠道倍率变化始终在一次扫描结束后合并发送。
 	v.SetDefault("notifications.minChangePct", 0)
 	v.SetDefault("notifications.balanceLowCooldownMinutes", 60)
-	v.SetDefault("notifications.subscriptionDailyRemainingThresholdPct", 0)
-	v.SetDefault("notifications.subscriptionWeeklyRemainingThresholdPct", 0)
-	v.SetDefault("notifications.subscriptionMonthlyRemainingThresholdPct", 0)
-	v.SetDefault("notifications.subscriptionExpiryThresholdHours", 0)
-	v.SetDefault("notifications.subscriptionAlertCooldownMinutes", 1440)
 	v.SetDefault("notifications.sendMaxAttempts", 3)
-
-	v.SetDefault("proxy.protocol", "http")
-	v.SetDefault("proxy.port", 0)
-	v.SetDefault("proxy.enabled", false)
-	v.SetDefault("proxy.versionCheckEnabled", false)
 
 	v.SetDefault("upstream.timeoutSeconds", DefaultUpstreamTimeoutSeconds)
 	v.SetDefault("upstream.userAgent", DefaultUpstreamUserAgent)
-	v.SetDefault("pricing.enabled", true)
-	v.SetDefault("pricing.remoteURL", DefaultPricingRemoteURL)
-	v.SetDefault("pricing.hashURL", DefaultPricingHashURL)
-	v.SetDefault("pricing.dataDir", "./data")
-	v.SetDefault("pricing.fallbackFile", "./backend/gateway/pricing/default_prices.json")
-	v.SetDefault("pricing.updateIntervalHours", 24)
-	v.SetDefault("pricing.hashCheckIntervalMinutes", 10)
-
-	v.SetDefault("gateway.tempPauseSeconds", DefaultGatewayTempPauseSeconds)
-	v.SetDefault("gateway.forwardTimeoutSeconds", DefaultGatewayForwardTimeoutSeconds)
-	v.SetDefault("gateway.modelsCacheTTLSeconds", DefaultGatewayModelsCacheTTLSeconds)
-	v.SetDefault("gateway.maxFailoverSwitches", DefaultGatewayMaxFailoverSwitches)
-	v.SetDefault("gateway.routeBatchConcurrency", DefaultGatewayRouteBatchConcurrency)
-	v.SetDefault("gateway.usageErrorBodyBytes", DefaultGatewayUsageErrorBodyBytes)
-	v.SetDefault("gateway.usageErrorMsgRunes", DefaultGatewayUsageErrorMsgRunes)
-	v.SetDefault("gateway.usageErrorHeaderValueRunes", DefaultGatewayUsageErrorHeaderValueRunes)
-	v.SetDefault("gateway.usageErrorHeadersJSONBytes", DefaultGatewayUsageErrorHeadersJSONBytes)
-	v.SetDefault("gateway.streamKeepaliveSeconds", DefaultGatewayStreamKeepaliveSeconds)
-	v.SetDefault("gateway.streamIdleTimeoutSeconds", DefaultGatewayStreamIdleTimeoutSeconds)
-	v.SetDefault("gateway.streamMaxLineBytes", DefaultGatewayStreamMaxLineBytes)
 
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")

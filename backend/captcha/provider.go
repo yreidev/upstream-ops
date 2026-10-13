@@ -1,4 +1,4 @@
-// Package captcha 提供 Cloudflare Turnstile 打码统一接口与 CapSolver / 2Captcha / AntiCaptcha / YesCaptcha 四种实现。
+// Package captcha 提供 Cloudflare Turnstile 打码统一接口与 YesCaptcha 实现。
 //
 // 后续若要拆为子包，仅需把每种实现迁出，通过 init() 调用 Register 即可。
 package captcha
@@ -21,16 +21,11 @@ type Provider interface {
 	SolveTurnstile(ctx context.Context, siteKey, pageURL string) (string, error)
 }
 
-type ProxySetter interface {
-	SetProxy(proxyURL string)
-}
-
 // Config 构造 Provider 所需的配置参数。APIKey 来自 storage.CaptchaConfig 解密后填入。
 type Config struct {
 	APIKey   string
 	Endpoint string
 	Extra    string // JSON
-	ProxyURL string
 }
 
 // Factory 用 Config 构造一个 Provider。
@@ -48,12 +43,16 @@ func Register(t storage.CaptchaProviderType, f Factory) {
 	registry[t] = f
 }
 
-// Build 根据 CaptchaConfig + 已解密的 APIKey 构造 Provider。
-func Build(cfg *storage.CaptchaConfig, apiKey string) (Provider, error) {
-	return BuildWithProxy(cfg, apiKey, "")
+// Supported 判断打码平台类型是否已注册。
+func Supported(t storage.CaptchaProviderType) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	_, ok := registry[t]
+	return ok
 }
 
-func BuildWithProxy(cfg *storage.CaptchaConfig, apiKey string, proxyURL string) (Provider, error) {
+// Build 根据 CaptchaConfig + 已解密的 APIKey 构造 Provider。
+func Build(cfg *storage.CaptchaConfig, apiKey string) (Provider, error) {
 	if cfg == nil {
 		return nil, errors.New("captcha config is nil")
 	}
@@ -63,11 +62,5 @@ func BuildWithProxy(cfg *storage.CaptchaConfig, apiKey string, proxyURL string) 
 	if !ok {
 		return nil, fmt.Errorf("unknown captcha provider: %s", cfg.Type)
 	}
-	p := f(Config{APIKey: apiKey, Endpoint: cfg.Endpoint, Extra: cfg.Extra, ProxyURL: proxyURL})
-	if proxyURL != "" {
-		if setter, ok := p.(ProxySetter); ok {
-			setter.SetProxy(proxyURL)
-		}
-	}
-	return p, nil
+	return f(Config{APIKey: apiKey, Endpoint: cfg.Endpoint, Extra: cfg.Extra}), nil
 }

@@ -1,10 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/bejix/upstream-ops/backend/captcha"
-	"github.com/bejix/upstream-ops/backend/config"
 	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/gin-gonic/gin"
 )
@@ -37,19 +37,22 @@ func registerCaptchas(g *gin.RouterGroup, d *Deps) {
 }
 
 type captchaInput struct {
-	Name         string                      `json:"name" binding:"required"`
-	Type         storage.CaptchaProviderType `json:"type" binding:"required"`
-	APIKey       string                      `json:"api_key"`
-	Endpoint     string                      `json:"endpoint"`
-	Extra        string                      `json:"extra"`
-	Enabled      bool                        `json:"enabled"`
-	ProxyEnabled bool                        `json:"proxy_enabled"`
+	Name     string                      `json:"name" binding:"required"`
+	Type     storage.CaptchaProviderType `json:"type" binding:"required"`
+	APIKey   string                      `json:"api_key"`
+	Endpoint string                      `json:"endpoint"`
+	Extra    string                      `json:"extra"`
+	Enabled  bool                        `json:"enabled"`
 }
 
 func createCaptcha(c *gin.Context, d *Deps) {
 	var in captchaInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	if !captcha.Supported(in.Type) {
+		fail(c, http.StatusBadRequest, fmt.Errorf("unsupported captcha provider: %s", in.Type))
 		return
 	}
 	key, err := d.Cipher.Encrypt(in.APIKey)
@@ -64,7 +67,6 @@ func createCaptcha(c *gin.Context, d *Deps) {
 		Endpoint:     in.Endpoint,
 		Extra:        in.Extra,
 		Enabled:      in.Enabled,
-		ProxyEnabled: in.ProxyEnabled,
 	}
 	if err := d.Captchas.Create(cfg); err != nil {
 		fail(c, http.StatusInternalServerError, err)
@@ -84,11 +86,7 @@ func refreshCaptchaBalance(c *gin.Context, d *Deps) {
 		fail(c, http.StatusNotFound, err)
 		return
 	}
-	proxyCfg := config.ProxyConfig{}
-	if d.Runtime != nil {
-		proxyCfg = d.Runtime.CurrentProxy()
-	}
-	updated, err := captcha.RefreshBalanceWithProxy(c.Request.Context(), d.Captchas, d.Cipher, cfg, proxyCfg)
+	updated, err := captcha.RefreshBalance(c.Request.Context(), d.Captchas, d.Cipher, cfg)
 	if err != nil {
 		fail(c, http.StatusBadGateway, err)
 		return
@@ -112,12 +110,15 @@ func updateCaptcha(c *gin.Context, d *Deps) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
+	if !captcha.Supported(in.Type) {
+		fail(c, http.StatusBadRequest, fmt.Errorf("unsupported captcha provider: %s", in.Type))
+		return
+	}
 	cfg.Name = in.Name
 	cfg.Type = in.Type
 	cfg.Endpoint = in.Endpoint
 	cfg.Extra = in.Extra
 	cfg.Enabled = in.Enabled
-	cfg.ProxyEnabled = in.ProxyEnabled
 	if in.APIKey != "" {
 		key, err := d.Cipher.Encrypt(in.APIKey)
 		if err != nil {

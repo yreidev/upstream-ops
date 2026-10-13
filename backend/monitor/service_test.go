@@ -25,8 +25,7 @@ import (
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := storage.Open(storage.DBConfig{
-		Driver: storage.DBDriverSQLite,
-		Path:   filepath.Join(t.TempDir(), "monitor-test.db"),
+		Path: filepath.Join(t.TempDir(), "monitor-test.db"),
 	})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
@@ -60,22 +59,24 @@ func TestRefreshRatesSyncAnnouncementsAndNotify(t *testing.T) {
 	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		webhookHits.Add(1)
 		var body struct {
-			Event string `json:"event"`
+			Markdown struct {
+				Content string `json:"content"`
+			} `json:"markdown"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode webhook: %v", err)
 		}
-		if body.Event != string(storage.EventAnnouncement) {
-			t.Fatalf("webhook event = %q, want announcement", body.Event)
+		if !strings.Contains(body.Markdown.Content, "demo 公告 · 公告二") {
+			t.Fatalf("webhook content = %q, want announcement", body.Markdown.Content)
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer webhookSrv.Close()
 
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
+		Name:         "wecom",
+		Type:         storage.NotifyWecom,
+		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -177,9 +178,9 @@ func TestRefreshRatesSkipsAnnouncementsWhenIgnored(t *testing.T) {
 	defer webhookSrv.Close()
 
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
+		Name:         "wecom",
+		Type:         storage.NotifyWecom,
+		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -264,9 +265,9 @@ func TestRefreshRatesEmitsRateAddedAndRemoved(t *testing.T) {
 	defer webhookSrv.Close()
 
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
+		Name:         "wecom",
+		Type:         storage.NotifyWecom,
+		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -302,14 +303,13 @@ func TestRefreshRatesEmitsRateAddedAndRemoved(t *testing.T) {
 	defer apiSrv.Close()
 
 	ch := &storage.Channel{
-		Name:                "sub",
-		Type:                storage.ChannelTypeSub2API,
-		SiteURL:             apiSrv.URL,
-		Username:            "u",
-		PasswordCipher:      mustEncrypt(t, cipher, `{"access_token":"token"}`),
-		CredentialMode:      storage.CredentialModeToken,
-		MonitorEnabled:      true,
-		SubscriptionEnabled: true,
+		Name:           "sub",
+		Type:           storage.ChannelTypeSub2API,
+		SiteURL:        apiSrv.URL,
+		Username:       "u",
+		PasswordCipher: mustEncrypt(t, cipher, `{"access_token":"token"}`),
+		CredentialMode: storage.CredentialModeToken,
+		MonitorEnabled: true,
 	}
 	if err := channels.Create(ch); err != nil {
 		t.Fatalf("create channel: %v", err)
@@ -410,9 +410,9 @@ func TestRefreshRatesAfterChannelReuseDoesNotEmitOldStructureChange(t *testing.T
 	defer webhookSrv.Close()
 
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
+		Name:         "wecom",
+		Type:         storage.NotifyWecom,
+		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -519,9 +519,9 @@ func TestRateEventSubscriptionFiltersGroups(t *testing.T) {
 	defer webhookSrv.Close()
 
 	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:          "webhook",
-		Type:          storage.NotifyWebhook,
-		ConfigCipher:  mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
+		Name:          "wecom",
+		Type:          storage.NotifyWecom,
+		ConfigCipher:  mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 		Subscriptions: `[{"channel_id":1,"mode":"groups","groups":["beta"]}]`,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
@@ -565,14 +565,13 @@ func TestRateEventSubscriptionFiltersGroups(t *testing.T) {
 	defer apiSrv.Close()
 
 	ch := &storage.Channel{
-		Name:                "sub",
-		Type:                storage.ChannelTypeSub2API,
-		SiteURL:             apiSrv.URL,
-		Username:            "u",
-		PasswordCipher:      mustEncrypt(t, cipher, `{"access_token":"token"}`),
-		CredentialMode:      storage.CredentialModeToken,
-		MonitorEnabled:      true,
-		SubscriptionEnabled: true,
+		Name:           "sub",
+		Type:           storage.ChannelTypeSub2API,
+		SiteURL:        apiSrv.URL,
+		Username:       "u",
+		PasswordCipher: mustEncrypt(t, cipher, `{"access_token":"token"}`),
+		CredentialMode: storage.CredentialModeToken,
+		MonitorEnabled: true,
 	}
 	if err := channels.Create(ch); err != nil {
 		t.Fatalf("create channel: %v", err)
@@ -616,108 +615,6 @@ func TestRateEventSubscriptionFiltersGroups(t *testing.T) {
 	}
 	if got := webhookHits.Load(); got != 2 {
 		t.Fatalf("webhook hits = %d, want 2", got)
-	}
-}
-
-func TestSubscriptionUsageAlertsAndCooldown(t *testing.T) {
-	db := openTestDB(t)
-	channels := storage.NewChannels(db)
-	authSessions := storage.NewAuthSessions(db)
-	captchas := storage.NewCaptchas(db)
-	announcements := storage.NewUpstreamAnnouncements(db)
-	rates := storage.NewRates(db)
-	monitorLogs := storage.NewMonitorLogs(db)
-	notifies := storage.NewNotifications(db)
-	cipher, err := crypto.NewCipher("secret")
-	if err != nil {
-		t.Fatalf("cipher: %v", err)
-	}
-
-	var webhookHits atomic.Int32
-	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhookHits.Add(1)
-		var body struct {
-			Event string `json:"event"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode webhook: %v", err)
-		}
-		if body.Event != string(storage.EventSubscriptionDailyLow) &&
-			body.Event != string(storage.EventSubscriptionMonthlyLow) &&
-			body.Event != string(storage.EventSubscriptionExpiring) {
-			t.Fatalf("unexpected event = %q", body.Event)
-		}
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer webhookSrv.Close()
-
-	if err := notifies.CreateChannel(&storage.NotificationChannel{
-		Name:         "webhook",
-		Type:         storage.NotifyWebhook,
-		ConfigCipher: mustEncrypt(t, cipher, `{"url":"`+webhookSrv.URL+`"}`),
-	}); err != nil {
-		t.Fatalf("create notify channel: %v", err)
-	}
-
-	expiresAt := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/me":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":50}}`))
-		case "/api/v1/usage/dashboard/stats":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"today_actual_cost":1,"total_actual_cost":2}}`))
-		case "/api/v1/subscriptions/progress":
-			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"subscription":{"id":9,"group_id":3,"status":"active","starts_at":"2026-01-01T00:00:00Z","expires_at":"` + expiresAt + `","group":{"id":3,"name":"pro"}},"progress":{"id":9,"group_name":"pro","expires_at":"` + expiresAt + `","expires_in_days":0,"daily":{"limit_usd":10,"used_usd":9,"remaining_usd":1,"percentage":90,"window_start":"2026-01-01T00:00:00Z","resets_at":"2026-01-02T00:00:00Z","resets_in_seconds":3600},"weekly":{"limit_usd":0,"used_usd":0,"remaining_usd":0,"percentage":0},"monthly":{"limit_usd":100,"used_usd":96,"remaining_usd":4,"percentage":96,"window_start":"2026-01-01T00:00:00Z","resets_at":"2026-02-01T00:00:00Z","resets_in_seconds":3600}}}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer apiSrv.Close()
-
-	ch := &storage.Channel{
-		Name:                "sub",
-		Type:                storage.ChannelTypeSub2API,
-		SiteURL:             apiSrv.URL,
-		Username:            "u",
-		PasswordCipher:      mustEncrypt(t, cipher, `{"access_token":"token"}`),
-		CredentialMode:      storage.CredentialModeToken,
-		MonitorEnabled:      true,
-		SubscriptionEnabled: true,
-	}
-	if err := channels.Create(ch); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-
-	channelSvc := channel.NewService(channels, authSessions, captchas, rates, monitorLogs, cipher)
-	dispatcher := notify.NewDispatcher(notifies, cipher, slog.New(slog.NewTextHandler(io.Discard, nil)), notify.Policy{
-		SubscriptionDailyRemainingThresholdPct:   15,
-		SubscriptionWeeklyRemainingThresholdPct:  15,
-		SubscriptionMonthlyRemainingThresholdPct: 5,
-		SubscriptionExpiryThreshold:              3 * time.Hour,
-		SubscriptionAlertCooldown:                time.Hour,
-		SendMaxAttempts:                          1,
-	})
-	svc := NewService(channels, announcements, rates, monitorLogs, channelSvc, dispatcher, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	svc.ScanAllBalances(context.Background())
-	if got := webhookHits.Load(); got != 3 {
-		t.Fatalf("webhook hits = %d, want 3", got)
-	}
-	svc.ScanAllBalances(context.Background())
-	if got := webhookHits.Load(); got != 3 {
-		t.Fatalf("webhook hits after cooldown = %d, want 3", got)
-	}
-
-	logs, err := notifies.ListLogs(10)
-	if err != nil {
-		t.Fatalf("list logs: %v", err)
-	}
-	seen := map[storage.NotificationEvent]bool{}
-	for _, log := range logs {
-		seen[log.Event] = true
-	}
-	if !seen[storage.EventSubscriptionDailyLow] || seen[storage.EventSubscriptionWeeklyLow] || !seen[storage.EventSubscriptionMonthlyLow] || !seen[storage.EventSubscriptionExpiring] {
-		t.Fatalf("events = %#v", seen)
 	}
 }
 
