@@ -4,6 +4,7 @@ import type { FormApi } from "@douyinfe/semi-ui/lib/es/form"
 import { IconRefresh } from "@douyinfe/semi-icons"
 import { PageHeader } from "@/components/layout/page-header"
 import { CCHSyncSection } from "@/components/settings/cch-sync-section"
+import { FormCronPicker } from "@/components/settings/cron-picker"
 import { SettingsSection } from "@/components/settings/settings-section"
 import { apiFetch } from "@/lib/api"
 import type { SystemConfig } from "@/lib/api-types"
@@ -198,10 +199,10 @@ export default function SettingsPage() {
             <Form.InputNumber field="auth.sessionTTLHours" label="登录有效期（小时）" min={0} style={{ width: "100%" }} {...lock("auth.sessionTTLHours")} />
           </SettingsSection>
 
-          <SettingsSection title="调度与保留策略" description="余额采集、倍率采集和历史数据清理的周期。Cron 带秒，共 6 段。">
-            <Form.Input field="scheduler.balanceCron" label="余额采集 Cron" extraText="余额与消费的同步周期。" className="mono" {...lock("scheduler.balanceCron")} />
-            <Form.Input field="scheduler.rateCron" label="倍率采集 Cron" extraText="分组倍率的扫描周期。" className="mono" {...lock("scheduler.rateCron")} />
-            <Form.Input field="scheduler.retention.cron" label="清理任务 Cron" extraText="留空则不清理历史数据。" className="mono" {...lock("scheduler.retention.cron")} />
+          <SettingsSection title="调度与保留策略" description="余额采集、倍率采集和历史数据清理多久跑一次。熟悉 Cron 表达式的可以选“自定义”直接填。">
+            <FormCronPicker field="scheduler.balanceCron" label="余额采集" offText="不定时采集余额与消费，需要时手动同步。" {...lock("scheduler.balanceCron")} />
+            <FormCronPicker field="scheduler.rateCron" label="倍率采集" offText="不定时扫描分组倍率，需要时手动同步。" {...lock("scheduler.rateCron")} />
+            <FormCronPicker field="scheduler.retention.cron" label="清理过期历史" offText="不清理历史数据。" {...lock("scheduler.retention.cron")} />
             <Form.InputNumber field="scheduler.retention.monitorLogsDays" label="监控日志保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.monitorLogsDays")} />
             <Form.InputNumber field="scheduler.retention.balanceSnapshotsDays" label="余额快照保留天数" extraText="余额与消费趋势图用这些数据。0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.balanceSnapshotsDays")} />
             <Form.InputNumber field="scheduler.retention.notificationLogsDays" label="通知记录保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.notificationLogsDays")} />
@@ -215,11 +216,11 @@ export default function SettingsPage() {
           </SettingsSection>
 
           <SettingsSection title="GPT 降智检测" description="在“降智检测”页加入的密钥按这里的周期巡检；模型和推理强度可以在那页按密钥单独设置。">
-            <Form.Input
+            <FormCronPicker
               field="scheduler.degradeCron"
-              label="降智巡检 Cron"
-              extraText="留空不定时巡检，只在“降智检测”页手动检测。每轮每把密钥至少问一次，每次大约 1.8 万输入 token。"
-              className="mono"
+              label="降智巡检"
+              extraText="每轮每把密钥至少问一次，每次大约 1.8 万输入 token。"
+              offText="不定时巡检，只在“降智检测”页手动检测。"
               {...lock("scheduler.degradeCron")}
             />
             <Form.Input field="degrade.model" label="默认模型" extraText="密钥没有单独设置时用这个模型，中转站的分组里得有它。" className="mono" {...lock("degrade.model")} />

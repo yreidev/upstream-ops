@@ -130,7 +130,7 @@ func (m *Manager) Validate(cfg *config.Config) error {
 			continue
 		}
 		if scheduler.ParseSpec(c.spec) != nil {
-			return cronError(c.label, c.spec)
+			return CronError(c.label, c.spec)
 		}
 	}
 	if effort := strings.TrimSpace(cfg.Degrade.Effort); effort != "" && !slices.Contains(config.DegradeEfforts, effort) {
@@ -153,8 +153,8 @@ func (m *Manager) Validate(cfg *config.Config) error {
 	return nil
 }
 
-// cronError 给出中文说明；cron 库的报错是英文，不直接给页面。
-func cronError(label, spec string) error {
+// CronError 给出中文说明；cron 库的报错是英文，不直接给页面。
+func CronError(label, spec string) error {
 	if n := len(strings.Fields(spec)); !strings.HasPrefix(spec, "@") && n != 6 {
 		return fmt.Errorf("%s 写法不对：要带秒，共 6 段（秒 分 时 日 月 周），现在是 %d 段。例如每 15 分钟：0 */15 * * * *", label, n)
 	}

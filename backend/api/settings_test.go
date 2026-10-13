@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/config"
@@ -221,5 +223,36 @@ func TestSaveSettingsDegrade(t *testing.T) {
 	// 留空回到默认值
 	if rec := putSettings(r, body("", "")); rec.Code != http.StatusOK || applied.Effort != config.DefaultDegradeEffort {
 		t.Fatalf("empty effort: status = %d, applied = %#v", rec.Code, applied)
+	}
+}
+
+func TestCronNextRuns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerSettings(r.Group("/api"), &Deps{Runtime: newSettingsRuntime(filepath.Join(t.TempDir(), "config.yaml"))})
+	get := func(spec string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/settings/cron/next?spec="+url.QueryEscape(spec), nil))
+		return rec
+	}
+
+	rec := get("0 */10 * * * *")
+	var got struct {
+		Data struct {
+			Next   []time.Time `json:"next"`
+			Offset *int        `json:"utc_offset_seconds"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil || got.Data.Offset == nil {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(got.Data.Next) != 3 || !got.Data.Next[0].After(time.Now()) ||
+		got.Data.Next[1].Sub(got.Data.Next[0]) != 10*time.Minute || got.Data.Next[2].Sub(got.Data.Next[1]) != 10*time.Minute {
+		t.Fatalf("next = %v", got.Data.Next)
+	}
+	for _, spec := range []string{"", "0 0 * * *", "每天"} {
+		if rec := get(spec); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Cron") {
+			t.Fatalf("spec %q: status = %d, body = %s", spec, rec.Code, rec.Body.String())
+		}
 	}
 }

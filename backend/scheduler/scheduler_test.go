@@ -108,3 +108,27 @@ func TestRunRatesCallsHookAfterScan(t *testing.T) {
 		t.Fatalf("hook calls = %d", calls)
 	}
 }
+
+func TestNextRuns(t *testing.T) {
+	from := time.Date(2026, 10, 13, 21, 7, 30, 0, time.UTC)
+	runs, err := NextRuns("0 5-59/15 * * * *", from, 3)
+	if err != nil {
+		t.Fatalf("next runs: %v", err)
+	}
+	want := []string{"21:20", "21:35", "21:50"}
+	for i, r := range runs {
+		if r.Format("15:04") != want[i] || r.Second() != 0 {
+			t.Fatalf("runs = %v, want %v", runs, want)
+		}
+	}
+	if len(runs) != 3 {
+		t.Fatalf("runs = %v", runs)
+	}
+	// 2 月 30 日永远不会到
+	if runs, err := NextRuns("0 0 0 30 2 *", from, 3); err != nil || len(runs) != 0 {
+		t.Fatalf("never: %v, %v", runs, err)
+	}
+	if _, err := NextRuns("0 0 * * *", from, 3); err == nil {
+		t.Fatal("5-field spec must be rejected")
+	}
+}

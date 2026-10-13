@@ -31,6 +31,23 @@ func ParseSpec(spec string) error {
 	return err
 }
 
+// NextRuns 按调度器的规则算出 spec 在 from 之后接下来的 n 次运行时间，设置页选周期时预览。
+// 永远不会触发的表达式（比如 2 月 30 日）返回空列表。
+func NextRuns(spec string, from time.Time, n int) ([]time.Time, error) {
+	sched, err := specParser.Parse(spec)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]time.Time, 0, n)
+	for t := from; len(out) < n; {
+		if t = sched.Next(t); t.IsZero() {
+			break
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
 // Scheduler 周期性任务调度器。
 type Scheduler struct {
 	cfg           config.SchedulerConfig

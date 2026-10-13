@@ -1,12 +1,16 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/runtimeconfig"
+	"github.com/yreidev/upstream-ops/backend/scheduler"
 )
 
 type settingsConfigView struct {
@@ -31,6 +35,25 @@ func registerSettings(g *gin.RouterGroup, d *Deps) {
 	gs := g.Group("/settings")
 	gs.GET("/config", func(c *gin.Context) { getSettingsConfig(c, d) })
 	gs.PUT("/config", func(c *gin.Context) { saveSettingsConfig(c, d) })
+	gs.GET("/cron/next", cronNextRuns)
+}
+
+// cronNextRuns 按调度器的规则算 Cron 接下来几次的运行时间，设置页选周期时预览。
+// 时间按服务器时区给出，带上时区偏移，页面和浏览器时区不同时注明。
+func cronNextRuns(c *gin.Context) {
+	spec := strings.TrimSpace(c.Query("spec"))
+	if spec == "" {
+		fail(c, http.StatusBadRequest, errors.New("Cron 为空"))
+		return
+	}
+	now := time.Now()
+	runs, err := scheduler.NextRuns(spec, now, 3)
+	if err != nil {
+		fail(c, http.StatusBadRequest, runtimeconfig.CronError("Cron", spec))
+		return
+	}
+	_, offset := now.Zone()
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"next": runs, "utc_offset_seconds": offset}})
 }
 
 // settingsKeys 设置页能改的配置项路径。

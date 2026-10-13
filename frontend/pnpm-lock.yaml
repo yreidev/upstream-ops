@@ -184,6 +184,9 @@ importers:
       '@visactor/vchart-semi-theme':
         specifier: ^1.13.1
         version: 1.13.1(@visactor/vchart@2.1.7)
+      cronstrue:
+        specifier: ^3.32.0
+        version: 3.32.0
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -1053,6 +1056,10 @@ packages:
 
   core-util-is@1.0.3:
     resolution: {integrity: sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==}
+
+  cronstrue@3.32.0:
+    resolution: {integrity: sha512-OHTec7+5nosN4UsitwgBDQ0bofGZF3H4pLqgqa93NR3nExNlhtVHcO2JY3jRognrFH8Bl9oAooT0hyCjSyOU+Q==}
+    hasBin: true
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -3174,6 +3181,8 @@ snapshots:
   copy-text-to-clipboard@2.2.0: {}
 
   core-util-is@1.0.3: {}
+
+  cronstrue@3.32.0: {}
 
   cross-spawn@7.0.6:
     dependencies:

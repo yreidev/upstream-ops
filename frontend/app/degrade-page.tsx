@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header"
 import { apiFetch } from "@/lib/api"
 import type { BackgroundJob, DegradeCheck, DegradeKey, DegradeResult, DegradeState } from "@/lib/api-types"
 import { confirm } from "@/lib/confirm"
+import { describeCron } from "@/lib/cron"
 import { formatDurationMS, formatTokens, fullDateTime, relativeTime } from "@/lib/format"
 import { fetchRunningJobs, startJob } from "@/lib/jobs"
 import { degradeEffortLabel, degradeResultMeta, degradeStateMeta } from "@/lib/labels"
@@ -408,11 +409,15 @@ export default function DegradePage() {
             用一道糖果题（正确答案 21）检测中转站的 GPT 有没有被降智。每轮先问一次，和已确认的状态不一样时再问两次，三次一致才改状态；确认降智和恢复时发通知。
             <span style={{ display: "block" }}>
               {cron ? (
-                <>
-                  定时巡检：<span className="mono">{cron}</span>。
-                </>
+                describeCron(cron) ? (
+                  `定时巡检：${describeCron(cron)}。`
+                ) : (
+                  <>
+                    定时巡检：<span className="mono">{cron}</span>。
+                  </>
+                )
               ) : (
-                "没开定时巡检，可以在设置页填“降智巡检 Cron”。"
+                "没开定时巡检，可以在设置页的“降智巡检”选周期。"
               )}
               {defaults ? `默认模型 ${defaults.model}，推理强度 ${degradeEffortLabel(defaults.effort)}。` : ""}
             </span>
