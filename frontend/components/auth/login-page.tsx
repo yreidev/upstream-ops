@@ -1,19 +1,13 @@
-"use client"
-
-import { useEffect, useState, type FormEvent } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
+import { useEffect, useState } from "react"
+import { Banner, Button, Card, Form, Typography } from "@douyinfe/semi-ui"
+import { IconActivity } from "@douyinfe/semi-icons"
+import type { ApiError } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { useAppVersion } from "@/lib/queries"
-import type { ApiError } from "@/lib/api"
 
 export function LoginPage() {
   const { login } = useAuth()
   const appVersion = useAppVersion()
-  const [username, setUsername] = useState("")
-  const [password, setPassword] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const appTitle = appVersion.data?.title?.trim() || "UpstreamOps"
@@ -22,68 +16,57 @@ export function LoginPage() {
     document.title = appTitle
   }, [appTitle])
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
+  async function handleSubmit(values: { username: string; password: string }) {
     setError(null)
     setSubmitting(true)
     try {
-      await login(username.trim(), password)
+      await login(values.username.trim(), values.password)
     } catch (err) {
       const e = err as ApiError
-      if (e.status === 401) {
-        setError("账号或密码错误")
-      } else {
-        setError(e.message || "登录失败")
-      }
+      setError(e.status === 401 ? "账号或密码错误" : e.message || "登录失败")
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm py-6">
-        <CardHeader className="space-y-1.5">
-          <CardTitle className="text-2xl">{appTitle}</CardTitle>
-          <CardDescription>登录后台，监控渠道余额和倍率。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="username">账号</Label>
-              <Input
-                id="username"
-                name="username"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                disabled={submitting}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={submitting}
-              />
-            </div>
-            {error ? (
-              <p className="text-sm text-destructive" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "登录中…" : "登录"}
-            </Button>
-          </form>
-        </CardContent>
+    <div
+      style={{
+        display: "flex",
+        minHeight: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        background: "var(--semi-color-bg-0)",
+      }}
+    >
+      <Card style={{ width: "100%", maxWidth: 380 }} bodyStyle={{ padding: 28 }}>
+        <div className="row" style={{ gap: 10, marginBottom: 4 }}>
+          <IconActivity style={{ fontSize: 28, color: "var(--semi-color-primary)" }} />
+          <Typography.Title heading={3} style={{ margin: 0 }}>
+            {appTitle}
+          </Typography.Title>
+        </div>
+        <Typography.Text type="tertiary">登录后台，监控渠道余额和倍率。</Typography.Text>
+        <Form<{ username: string; password: string }> onSubmit={handleSubmit} style={{ marginTop: 16 }} disabled={submitting}>
+          <Form.Input
+            field="username"
+            label="账号"
+            autoComplete="username"
+            rules={[{ required: true, message: "请输入账号" }]}
+          />
+          <Form.Input
+            field="password"
+            label="密码"
+            mode="password"
+            autoComplete="current-password"
+            rules={[{ required: true, message: "请输入密码" }]}
+          />
+          {error ? <Banner fullMode={false} type="danger" description={error} closeIcon={null} style={{ marginTop: 8 }} /> : null}
+          <Button htmlType="submit" theme="solid" type="primary" block loading={submitting} style={{ marginTop: 16 }}>
+            登录
+          </Button>
+        </Form>
       </Card>
     </div>
   )

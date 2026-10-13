@@ -1,5 +1,3 @@
-"use client"
-
 import { useEffect, useRef, useState } from "react"
 import { apiFetch } from "@/lib/api"
 import { useRefreshTick } from "@/lib/refresh-context"
@@ -14,6 +12,7 @@ import type {
   ChannelPage,
   CostTrendPoint,
   DashboardSummary,
+  MonitorLog,
   NotificationChannel,
   NotificationLogPage,
   RateChangeLogPage,
@@ -296,6 +295,14 @@ export function useAnnouncements(page = 1, pageSize = 20) {
 
 export function useCaptchaConfigs(enabled = true) {
   return useApi<CaptchaConfig[]>(enabled ? "/captcha-configs" : null)
+}
+
+/** 监控日志按开始时间倒序，最多 limit 条；channelID 为空表示全部渠道。接口不分页。 */
+export function useMonitorLogs(channelID: number | undefined, limit: number) {
+  const q = new URLSearchParams()
+  if (channelID != null) q.set("channel_id", String(channelID))
+  q.set("limit", String(limit))
+  return useApi<MonitorLog[]>(`/monitor-logs?${q.toString()}`)
 }
 
 export function useSystemConfig() {

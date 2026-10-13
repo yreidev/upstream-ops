@@ -1,1295 +1,267 @@
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
-import {
-  Bell,
-  Clock3,
-  MonitorCog,
-  KeyRound,
-  PencilLine,
-  Plus,
-  RefreshCw,
-  Send,
-  Server,
-  ShieldCheck,
-  Trash2,
-} from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useConfirm } from "@/components/ui/confirm-dialog";
-import { CaptchaFormDialog } from "@/components/monitor/captcha-form-dialog";
-import { NotificationFormDialog } from "@/components/monitor/notification-form-dialog";
-import { UpdateNotesDialog } from "@/components/monitor/update-notes-dialog";
-import { apiFetch } from "@/lib/api";
-import { useTriggerRefresh } from "@/lib/refresh-context";
-import type {
-  AppVersion,
-  ApplyConfigResult,
-  CaptchaConfig,
-  NotificationChannel,
-  NotificationChannelType,
-  SystemConfig,
-} from "@/lib/api-types";
-import { decimal, money, relativeTime } from "@/lib/format";
-import {
-  useCaptchaConfigs,
-  useNotificationLogs,
-  useNotificationChannels,
-  useAppVersion,
-  useSystemConfig,
-} from "@/lib/queries";
-import { cn } from "@/lib/utils";
+import { lazy, Suspense, useRef, useState, type ReactNode } from "react"
+import { Banner, Button, Card, Form, Spin, Tag, Toast, Typography } from "@douyinfe/semi-ui"
+import type { FormApi } from "@douyinfe/semi-ui/lib/es/form"
+import { IconRefresh } from "@douyinfe/semi-icons"
+import { PageHeader } from "@/components/layout/page-header"
+import { apiFetch } from "@/lib/api"
+import type { ApplyConfigResult, SystemConfig } from "@/lib/api-types"
+import { useSystemConfig } from "@/lib/queries"
+import { useTriggerRefresh } from "@/lib/refresh-context"
+import { useVersionCheck } from "@/hooks/use-version-check"
+import { useIsMobile } from "@/hooks/use-mobile"
 
-function num(v: string) {
-  return Number(v || 0);
+const UpdateNotesModal = lazy(() => import("@/components/monitor/update-notes-modal"))
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : ""
+}
+
+function num(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * 把表单值整理成 PUT /settings/config 的请求体。清空的输入框在表单里可能是 undefined，
+ * 这里统一补成空字符串或 0；以服务端返回的配置打底，保留表单上没有的字段。
+ */
+function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfig {
+  return {
+    app: {
+      ...base.app,
+      title: str(v.app?.title),
+      notificationPrefix: str(v.app?.notificationPrefix),
+    },
+    auth: {
+      ...base.auth,
+      enabled: Boolean(v.auth?.enabled),
+      username: str(v.auth?.username),
+      password: str(v.auth?.password),
+      tokenSecret: str(v.auth?.tokenSecret),
+      sessionTTLHours: num(v.auth?.sessionTTLHours),
+    },
+    scheduler: {
+      ...base.scheduler,
+      balanceCron: str(v.scheduler?.balanceCron),
+      rateCron: str(v.scheduler?.rateCron),
+      concurrency: num(v.scheduler?.concurrency),
+      retention: {
+        ...base.scheduler.retention,
+        cron: str(v.scheduler?.retention?.cron),
+        monitorLogsDays: num(v.scheduler?.retention?.monitorLogsDays),
+        balanceSnapshotsDays: num(v.scheduler?.retention?.balanceSnapshotsDays),
+        notificationLogsDays: num(v.scheduler?.retention?.notificationLogsDays),
+        announcementsDays: num(v.scheduler?.retention?.announcementsDays),
+      },
+    },
+    notifications: {
+      ...base.notifications,
+      minChangePct: num(v.notifications?.minChangePct),
+      balanceLowCooldownMinutes: num(v.notifications?.balanceLowCooldownMinutes),
+      sendMaxAttempts: num(v.notifications?.sendMaxAttempts),
+    },
+    upstream: {
+      ...base.upstream,
+      timeoutSeconds: num(v.upstream?.timeoutSeconds),
+      userAgent: str(v.upstream?.userAgent),
+    },
+  }
+}
+
+function Section({ title, description, extra, children }: {
+  title: string
+  description: string
+  extra?: ReactNode
+  children: ReactNode
+}) {
+  const isMobile = useIsMobile()
+  // 手机上右侧放不下，附加内容挪到说明下面，不然标题会被挤成一字一行
+  return (
+    <Card
+      title={
+        <div className="stack" style={{ gap: 2 }}>
+          <Typography.Text strong>{title}</Typography.Text>
+          <Typography.Text type="tertiary" size="small">
+            {description}
+          </Typography.Text>
+          {isMobile && extra ? <div style={{ marginTop: 6 }}>{extra}</div> : null}
+        </div>
+      }
+      headerExtraContent={isMobile ? undefined : extra}
+    >
+      <div className="form-grid">{children}</div>
+    </Card>
+  )
 }
 
 export default function SettingsPage() {
-  const query = useSystemConfig();
-  const notifications = useNotificationChannels();
-  const captchas = useCaptchaConfigs();
-  const notificationLogs = useNotificationLogs(1, 10);
-  const appVersion = useAppVersion();
-  const refresh = useTriggerRefresh();
-  const { confirm, dialog: confirmDialog } = useConfirm();
-  const [form, setForm] = useState<SystemConfig | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [configSavedPendingApply, setConfigSavedPendingApply] = useState(false);
-  const [checkingVersion, setCheckingVersion] = useState(false);
-  const [editingNotification, setEditingNotification] =
-    useState<NotificationChannel | null>(null);
-  const [notificationOpen, setNotificationOpen] = useState(false);
-  const [editingCaptcha, setEditingCaptcha] = useState<CaptchaConfig | null>(
-    null,
-  );
-  const [captchaOpen, setCaptchaOpen] = useState(false);
-  const [busyNotificationID, setBusyNotificationID] = useState<number | null>(
-    null,
-  );
-  const [busyCaptchaID, setBusyCaptchaID] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState("system");
-  const [versionInfo, setVersionInfo] = useState<AppVersion | null>(null);
-  const [updateNotesOpen, setUpdateNotesOpen] = useState(false);
+  const query = useSystemConfig()
+  const refresh = useTriggerRefresh()
+  const versionCheck = useVersionCheck()
+  const formApi = useRef<FormApi | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [pendingApply, setPendingApply] = useState(false)
+  // 表单只在拿到配置后挂载一次；之后的定时刷新不覆盖正在编辑的内容
+  const [initial, setInitial] = useState<SystemConfig | null>(null)
 
-  useEffect(() => {
-    if (query.data?.config) {
-      setForm(query.data.config);
-    }
-  }, [query.data]);
-
-  useEffect(() => {
-    if (appVersion.data) {
-      setVersionInfo(appVersion.data);
-    }
-  }, [appVersion.data]);
-
-  if (query.loading && !form) {
-    return (
-      <section className="text-sm text-muted-foreground">加载配置中...</section>
-    );
-  }
-
-  if (query.error && !form) {
-    return (
-      <section className="text-sm text-destructive">{query.error}</section>
-    );
-  }
-
-  if (!form) return null;
-
-  const recentLogs = notificationLogs.data?.items ?? [];
-  const lastSent = recentLogs[0]?.sent_at ?? null;
-  const recentFailed = recentLogs.filter((item) => !item.success).length;
-
-  async function handleDeleteNotification(channel: NotificationChannel) {
-    const ok = await confirm({
-      title: `删除通知渠道 ${channel.name}？`,
-      description: "删除后该渠道将不再接收系统通知。",
-      confirmLabel: "删除",
-      destructive: true,
-    });
-    if (!ok) return;
-    setBusyNotificationID(channel.id);
-    try {
-      await apiFetch(`/notifications/channels/${channel.id}`, {
-        method: "DELETE",
-      });
-      toast.success(`已删除 ${channel.name}`);
-      refresh();
-      notifications.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "删除失败");
-    } finally {
-      setBusyNotificationID(null);
-    }
-  }
-
-  async function handleTestNotification(channel: NotificationChannel) {
-    setBusyNotificationID(channel.id);
-    try {
-      const res = await apiFetch<{ ok: boolean; error?: string }>(
-        `/notifications/channels/${channel.id}/test`,
-        {
-          method: "POST",
-        },
-      );
-      if (res.ok) {
-        toast.success(`已发送测试消息到 ${channel.name}`);
-      } else {
-        toast.error(res.error ?? "测试失败");
-      }
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "测试失败");
-    } finally {
-      setBusyNotificationID(null);
-    }
-  }
-
-  async function handleDeleteCaptcha(item: CaptchaConfig) {
-    const ok = await confirm({
-      title: `删除验证码服务 ${item.name}？`,
-      description: "删除后引用此服务的渠道需要重新指定验证码服务。",
-      confirmLabel: "删除",
-      destructive: true,
-    });
-    if (!ok) return;
-    setBusyCaptchaID(item.id);
-    try {
-      await apiFetch(`/captcha-configs/${item.id}`, { method: "DELETE" });
-      toast.success(`已删除 ${item.name}`);
-      refresh();
-      captchas.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "删除失败");
-    } finally {
-      setBusyCaptchaID(null);
-    }
-  }
-
-  async function handleRefreshCaptchaBalance(item: CaptchaConfig) {
-    setBusyCaptchaID(item.id);
-    try {
-      await apiFetch(`/captcha-configs/${item.id}/refresh-balance`, {
-        method: "POST",
-      });
-      toast.success(`已更新 ${item.name} 剩余额度`);
-      refresh();
-      captchas.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "更新失败");
-      refresh();
-      captchas.refetch();
-    } finally {
-      setBusyCaptchaID(null);
-    }
-  }
+  if (!initial && query.data?.config) setInitial(query.data.config)
 
   async function handleSave() {
-    setSaving(true);
+    if (!formApi.current || !initial) return
+    setSaving(true)
     try {
-      await apiFetch("/settings/config", {
-        method: "PUT",
-        body: JSON.stringify(form),
-      });
-      toast.success("已写入配置文件");
-      setConfigSavedPendingApply(true);
-      query.refetch();
-      refresh();
+      const payload = buildPayload(initial, formApi.current.getValues() as Partial<SystemConfig>)
+      await apiFetch("/settings/config", { method: "PUT", body: JSON.stringify(payload) })
+      Toast.success("已写入配置文件")
+      setInitial(payload)
+      setDirty(false)
+      setPendingApply(true)
+      query.refetch()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "保存失败");
+      Toast.error(err instanceof Error ? err.message : "保存失败")
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
   async function handleApply() {
-    setApplying(true);
+    setApplying(true)
     try {
-      const result = await apiFetch<ApplyConfigResult>("/settings/apply", {
-        method: "POST",
-      });
-      toast.success(result.message);
-      setConfigSavedPendingApply(false);
-      query.refetch();
-      refresh();
+      const result = await apiFetch<ApplyConfigResult>("/settings/apply", { method: "POST" })
+      Toast.success(result.message)
+      setPendingApply(false)
+      query.refetch()
+      refresh()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "应用失败");
+      Toast.error(err instanceof Error ? err.message : "应用失败")
     } finally {
-      setApplying(false);
+      setApplying(false)
     }
   }
 
-  async function handleCheckVersion() {
-    setCheckingVersion(true);
-    try {
-      const result = await apiFetch<AppVersion>("/version");
-      setVersionInfo(result);
-      appVersion.setData(result);
-      if (result.update_error) {
-        toast.error(result.update_error);
-      } else if (result.update_available && result.latest_version) {
-        setUpdateNotesOpen(true);
-      } else {
-        toast.success("当前已是最新版本");
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "检测更新失败");
-    } finally {
-      setCheckingVersion(false);
-    }
-  }
+  const header = (
+    <PageHeader
+      title="设置"
+      description="保存只写入配置文件，点“应用”后鉴权、调度、通知策略和上游请求立即生效。通知渠道、打码平台在各自页面管理，改动实时生效。"
+    />
+  )
 
-  return (
-    <section className="space-y-4">
-      <header className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold text-foreground">系统设置</h1>
-          <Badge
-            variant="outline"
-            className="border-border bg-muted/40 text-muted-foreground"
-          >
-            动态配置中心
-          </Badge>
-        </div>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          这里集中管理鉴权、调度、通知策略、通知渠道和验证码服务。保存只写入配置文件，应用会让鉴权、调度和通知策略立即生效；通知渠道和验证码服务本身是实时写库生效。
-        </p>
-        <p className="text-xs text-muted-foreground">
-          配置文件路径：{query.data?.config_path ?? "—"}
-        </p>
-      </header>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="h-auto w-full justify-start rounded-2xl border border-border bg-muted/40 p-1">
-          <TabsTrigger value="system" className="px-4 py-2">
-            系统设置
-          </TabsTrigger>
-          <TabsTrigger value="notifications" className="px-4 py-2">
-            通知渠道
-          </TabsTrigger>
-          <TabsTrigger value="captcha" className="px-4 py-2">
-            验证码服务
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="system">
-          <Card className="overflow-hidden border-border shadow-none">
-            <CardContent className="space-y-8 p-4 sm:p-6">
-              <SectionCard
-                icon={<MonitorCog className="size-4 text-violet-600" />}
-                title="应用信息"
-                description="控制页面标题和通知标题前缀。"
-              >
-                <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="outline" className="border-border bg-background">
-                    当前版本 {versionInfo?.version || "加载中"}
-                  </Badge>
-                  {versionInfo?.latest_version ? (
-                    versionInfo.update_available ? (
-                      <button
-                        type="button"
-                        onClick={() => setUpdateNotesOpen(true)}
-                        title="查看更新日志"
-                      >
-                        <Badge
-                          variant="outline"
-                          className="border-transparent bg-amber-50 text-amber-700 hover:bg-amber-100"
-                        >
-                          可更新 {versionInfo.latest_version} · 查看更新日志
-                        </Badge>
-                      </button>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="border-transparent bg-emerald-50 text-emerald-700"
-                      >
-                        已是最新
-                      </Badge>
-                    )
-                  ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 border-border bg-background px-2 text-xs"
-                    onClick={handleCheckVersion}
-                    disabled={checkingVersion}
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "size-3.5",
-                        checkingVersion ? "animate-spin" : "",
-                      )}
-                    />
-                    {checkingVersion ? "检测中..." : "检测更新"}
-                  </Button>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field
-                    label="应用标题"
-                    description="用于顶部标题和浏览器标签标题。"
-                  >
-                    <Input
-                      value={form.app.title}
-                      onChange={(e) =>
-                        setForm((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                app: { ...prev.app, title: e.target.value },
-                              }
-                            : prev,
-                        )
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label="通知前缀"
-                    description="为空时通知标题不添加前缀。"
-                  >
-                    <Input
-                      value={form.app.notificationPrefix}
-                      onChange={(e) =>
-                        setForm((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                app: {
-                                  ...prev.app,
-                                  notificationPrefix: e.target.value,
-                                },
-                              }
-                            : prev,
-                        )
-                      }
-                    />
-                  </Field>
-                </div>
-              </SectionCard>
-
-              <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_1fr]">
-            <SectionCard
-              icon={<ShieldCheck className="size-4 text-emerald-600" />}
-              title="登录鉴权"
-              description="控制后台是否需要登录，以及登录令牌的签发方式。"
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <InlineSwitch
-                  id="auth-enabled"
-                  label="启用登录鉴权"
-                  description="关闭后前端将直接进入系统，不显示登录页。"
-                  checked={form.auth.enabled}
-                  onCheckedChange={(checked) =>
-                    setForm((prev) =>
-                      prev
-                        ? { ...prev, auth: { ...prev.auth, enabled: checked } }
-                        : prev,
-                    )
-                  }
-                />
-                <NoteBox title="热应用说明">
-                  应用后新的鉴权配置立即生效，现有无效令牌会在后续请求时被拦截。
-                </NoteBox>
-              </div>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <Field
-                  label="管理员账号"
-                  description="用于后台登录的固定账号。"
-                >
-                  <Input
-                    value={form.auth.username}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              auth: { ...prev.auth, username: e.target.value },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="登录有效期（小时）"
-                  description="登录后令牌的有效时长。"
-                >
-                  <Input
-                    type="number"
-                    value={String(form.auth.sessionTTLHours)}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              auth: {
-                                ...prev.auth,
-                                sessionTTLHours: num(e.target.value),
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="管理员密码"
-                  description="保存后写入配置文件，应用后用于新登录。"
-                >
-                  <Input
-                    value={form.auth.password}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              auth: { ...prev.auth, password: e.target.value },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="令牌签名密钥"
-                  description="留空时回退使用安全主密钥。"
-                >
-                  <Input
-                    value={form.auth.tokenSecret}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              auth: {
-                                ...prev.auth,
-                                tokenSecret: e.target.value,
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              icon={<Clock3 className="size-4 text-sky-600" />}
-              title="调度与保留策略"
-              description="管理余额采集、倍率采集和历史清理任务。"
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="余额采集 Cron"
-                  description="控制余额与消费同步的执行周期。"
-                >
-                  <Input
-                    value={form.scheduler.balanceCron}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                balanceCron: e.target.value,
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="倍率采集 Cron"
-                  description="控制分组倍率扫描的执行周期。"
-                >
-                  <Input
-                    value={form.scheduler.rateCron}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                rateCron: e.target.value,
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="并发数"
-                  description="调度器每轮最多同时处理的任务数。"
-                >
-                  <Input
-                    type="number"
-                    value={String(form.scheduler.concurrency)}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                concurrency: num(e.target.value),
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="清理任务 Cron"
-                  description="留空则不执行历史数据清理。"
-                >
-                  <Input
-                    value={form.scheduler.retention.cron}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                retention: {
-                                  ...prev.scheduler.retention,
-                                  cron: e.target.value,
-                                },
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-              </div>
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
-                <Field
-                  label="监控日志保留天数"
-                  description="超过该天数的监控日志会被清理。"
-                >
-                  <Input
-                    type="number"
-                    value={String(form.scheduler.retention.monitorLogsDays)}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                retention: {
-                                  ...prev.scheduler.retention,
-                                  monitorLogsDays: num(e.target.value),
-                                },
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="余额快照保留天数"
-                  description="余额与消费趋势依赖这部分历史快照。"
-                >
-                  <Input
-                    type="number"
-                    value={String(
-                      form.scheduler.retention.balanceSnapshotsDays,
-                    )}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                retention: {
-                                  ...prev.scheduler.retention,
-                                  balanceSnapshotsDays: num(e.target.value),
-                                },
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-                <Field
-                  label="通知日志保留天数"
-                  description="通知发送结果的历史留存时长。"
-                >
-                  <Input
-                    type="number"
-                    value={String(
-                      form.scheduler.retention.notificationLogsDays,
-                    )}
-                    onChange={(e) =>
-                      setForm((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              scheduler: {
-                                ...prev.scheduler,
-                                retention: {
-                                  ...prev.scheduler.retention,
-                                  notificationLogsDays: num(e.target.value),
-                                },
-                              },
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                </Field>
-              </div>
-            </SectionCard>
+  if (!initial) {
+    return (
+      <div className="page">
+        {header}
+        {query.error ? (
+          <Banner fullMode={false} type="danger" closeIcon={null} description={query.error} />
+        ) : (
+          <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
+            <Spin size="large" />
           </div>
-
-          <SectionCard
-            icon={<Bell className="size-4 text-amber-600" />}
-            title="通知策略"
-            description="这些项决定系统如何过滤和重试通知。"
-          >
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Field
-                label="最小涨跌幅百分比"
-                description="低于该值的倍率变化不发送通知。"
-              >
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={String(form.notifications.minChangePct)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              minChangePct: Number(e.target.value || 0),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="余额不足冷却分钟"
-                description="同一渠道重复告警的抑制时间。"
-              >
-                <Input
-                  type="number"
-                  value={String(form.notifications.balanceLowCooldownMinutes)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              balanceLowCooldownMinutes: num(e.target.value),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field
-                label="通知最大重试次数"
-                description="发送失败后的最大尝试次数。"
-              >
-                <Input
-                  type="number"
-                  value={String(form.notifications.sendMaxAttempts)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            notifications: {
-                              ...prev.notifications,
-                              sendMaxAttempts: num(e.target.value),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            icon={<Server className="size-4 text-indigo-600" />}
-            title="上游请求"
-            description="配置渠道访问上游站点时使用的超时时间和 User-Agent。"
-          >
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="超时时间（秒）" description="小于等于 0 时使用默认 30 秒。">
-                <Input
-                  type="number"
-                  min={0}
-                  value={String(form.upstream.timeoutSeconds)}
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            upstream: {
-                              ...prev.upstream,
-                              timeoutSeconds: num(e.target.value),
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-              <Field label="User-Agent" description="为空时使用 upstream-ops/0.1。">
-                <Input
-                  value={form.upstream.userAgent}
-                  placeholder="upstream-ops/0.1"
-                  onChange={(e) =>
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            upstream: {
-                              ...prev.upstream,
-                              userAgent: e.target.value,
-                            },
-                          }
-                        : prev,
-                    )
-                  }
-                />
-              </Field>
-            </div>
-          </SectionCard>
-
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-5">
-            <Button onClick={handleSave} disabled={saving || applying}>
-              {saving ? "保存中..." : "保存"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleApply}
-              disabled={saving || applying}
-            >
-              {applying ? "应用中..." : "应用"}
-            </Button>
-            <span
-              className={cn(
-                "text-xs",
-                configSavedPendingApply
-                  ? "font-medium text-amber-700"
-                  : "text-muted-foreground",
-              )}
-            >
-              {configSavedPendingApply
-                ? "配置已保存但尚未应用，点击应用后才会立即生效。"
-                : "保存写入配置文件，应用让鉴权、调度、通知策略和上游请求配置立即更新。"}
-            </span>
-          </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="notifications">
-          <SectionCard
-            icon={<Send className="size-4 text-violet-600" />}
-            title="通知渠道"
-            description="管理 Telegram、企业微信通知出口。"
-            action={
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-border bg-background"
-                onClick={() => {
-                  setEditingNotification(null);
-                  setNotificationOpen(true);
-                }}
-              >
-                <Plus className="size-3.5" />
-                新增渠道
-              </Button>
-            }
-          >
-            <div className="mb-4 grid gap-3 md:grid-cols-3">
-              <MiniMetric
-                title="渠道总数"
-                value={String(notifications.data?.length ?? 0)}
-              />
-              <MiniMetric
-                title="最近发送"
-                value={lastSent ? relativeTime(lastSent) : "—"}
-              />
-              <MiniMetric
-                title="最近失败"
-                value={String(recentFailed)}
-                danger={recentFailed > 0}
-              />
-            </div>
-            {notifications.loading ? (
-              <EmptyLine text="通知渠道加载中..." />
-            ) : !notifications.data || notifications.data.length === 0 ? (
-              <EmptyPanel
-                title="还没有通知渠道"
-                description="新增一个通知渠道后，就可以用于余额告警、登录失败和倍率变化提醒。"
-              />
-            ) : (
-              <div className="space-y-3">
-                {notifications.data.map((channel) => {
-                  const Icon = notifyIcon(channel.type);
-                  const subCount = parseSubCount(channel.subscriptions);
-                  return (
-                    <div
-                      key={channel.id}
-                      className="rounded-2xl border border-border bg-background/80 p-4"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <div
-                            className={cn(
-                              "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl border",
-                              channel.enabled
-                                ? "border-violet-200 bg-violet-50 text-violet-700"
-                                : "border-border bg-muted/40 text-muted-foreground",
-                            )}
-                          >
-                            <Icon className="size-4" />
-                          </div>
-                          <div className="min-w-0 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="truncate text-sm font-semibold text-foreground">
-                                {channel.name}
-                              </p>
-                              <Badge
-                                variant="outline"
-                                className="border-border bg-muted/40"
-                              >
-                                {typeLabel(channel.type)}
-                              </Badge>
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "border-transparent",
-                                  channel.enabled
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : "bg-slate-100 text-slate-500",
-                                )}
-                              >
-                                {channel.enabled ? "启用中" : "已禁用"}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {subCount === 0
-                                ? "订阅全部渠道和分组"
-                                : `已配置 ${subCount} 条订阅规则`}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={busyNotificationID === channel.id}
-                            onClick={() => handleTestNotification(channel)}
-                          >
-                            测试发送
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingNotification(channel);
-                              setNotificationOpen(true);
-                            }}
-                          >
-                            <PencilLine className="size-4" />
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            disabled={busyNotificationID === channel.id}
-                            onClick={() => handleDeleteNotification(channel)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </SectionCard>
-        </TabsContent>
-
-        <TabsContent value="captcha">
-          <SectionCard
-            icon={<KeyRound className="size-4 text-rose-600" />}
-            title="验证码服务"
-            description="管理用于处理 Turnstile 的打码平台，供渠道登录时自动调用。"
-            action={
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-border bg-background"
-                onClick={() => {
-                  setEditingCaptcha(null);
-                  setCaptchaOpen(true);
-                }}
-              >
-                <Plus className="size-3.5" />
-                新增服务
-              </Button>
-            }
-          >
-            <div className="mb-4 grid gap-3 md:grid-cols-2">
-              <MiniMetric
-                title="服务数量"
-                value={String(captchas.data?.length ?? 0)}
-              />
-              <MiniMetric
-                title="用途"
-                value="登录验证"
-                hint="渠道启用 Turnstile 时调用"
-              />
-            </div>
-            {captchas.loading ? (
-              <EmptyLine text="验证码服务加载中..." />
-            ) : !captchas.data || captchas.data.length === 0 ? (
-              <EmptyPanel
-                title="还没有验证码服务"
-                description="如果某些渠道登录需要 Turnstile 验证，在这里接入 YesCaptcha。"
-              />
-            ) : (
-              <div className="space-y-3">
-                {captchas.data.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-2xl border border-border bg-background/80 p-4"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold text-foreground">
-                            {item.name}
-                          </p>
-                          <Badge
-                            variant="outline"
-                            className="border-border bg-muted/40"
-                          >
-                            {captchaLabel(item.type)}
-                          </Badge>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "border-transparent",
-                              item.enabled
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-slate-100 text-slate-500",
-                            )}
-                          >
-                            {item.enabled ? "启用中" : "已禁用"}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {item.endpoint
-                            ? `自定义 Endpoint：${item.endpoint}`
-                            : "使用平台默认 Endpoint"}
-                        </p>
-                        <p
-                          className={cn(
-                            "text-xs",
-                            item.balance_error
-                              ? "text-destructive"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          剩余额度：{formatCaptchaBalance(item)}
-                          {item.balance_error
-                            ? ` · ${item.balance_error}`
-                            : item.balance_at
-                              ? ` · 更新于 ${relativeTime(item.balance_at)}`
-                              : " · 未更新"}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          disabled={busyCaptchaID === item.id}
-                          onClick={() => handleRefreshCaptchaBalance(item)}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "size-4",
-                              busyCaptchaID === item.id ? "animate-spin" : "",
-                            )}
-                          />
-                        </Button>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setEditingCaptcha(item);
-                            setCaptchaOpen(true);
-                          }}
-                        >
-                          <PencilLine className="size-4" />
-                        </Button>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          disabled={busyCaptchaID === item.id}
-                          onClick={() => handleDeleteCaptcha(item)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionCard>
-        </TabsContent>
-
-      </Tabs>
-
-      <NotificationFormDialog
-        open={notificationOpen}
-        onOpenChange={(open) => {
-          setNotificationOpen(open);
-          if (!open) setEditingNotification(null);
-        }}
-        channel={editingNotification}
-      />
-
-      <CaptchaFormDialog
-        open={captchaOpen}
-        onOpenChange={(open) => {
-          setCaptchaOpen(open);
-          if (!open) setEditingCaptcha(null);
-        }}
-        config={editingCaptcha}
-      />
-
-      {confirmDialog}
-      <UpdateNotesDialog
-        open={updateNotesOpen}
-        onOpenChange={setUpdateNotesOpen}
-        version={versionInfo}
-      />
-    </section>
-  );
-}
-
-function Field({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="space-y-1">
-        <Label className="text-xs font-medium text-foreground">{label}</Label>
-        {description ? (
-          <p className="text-[11px] leading-5 text-muted-foreground">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SectionCard({
-  icon,
-  title,
-  description,
-  action,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-3xl border border-border/80 bg-muted/20 p-5">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            {icon}
-            {title}
-          </div>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            {description}
-          </p>
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function InlineSwitch({
-  id,
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string;
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 rounded-2xl border border-border bg-background/90 px-4 py-3">
-      <div className="space-y-1">
-        <Label htmlFor={id} className="text-sm font-medium text-foreground">
-          {label}
-        </Label>
-        <p className="text-[11px] leading-5 text-muted-foreground">
-          {description}
-        </p>
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
-  );
-}
-
-function NoteBox({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-        {title}
-      </p>
-      <p className="mt-1 leading-6">{children}</p>
-    </div>
-  );
-}
-
-function MiniMetric({
-  title,
-  value,
-  hint,
-  danger = false,
-}: {
-  title: string;
-  value: string;
-  hint?: string;
-  danger?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-border bg-background/80 px-4 py-3">
-      <p className="text-[11px] text-muted-foreground">{title}</p>
-      <p
-        className={cn(
-          "mt-1 text-sm font-semibold",
-          danger ? "text-destructive" : "text-foreground",
         )}
+      </div>
+    )
+  }
+
+  const v = versionCheck.version
+  const statusText = dirty
+    ? "有未保存的修改"
+    : pendingApply
+      ? "已保存，点“应用”后立即生效"
+      : "保存写入配置文件，应用让改动立即生效"
+
+  return (
+    <div className="page">
+      {header}
+      <Form
+        labelPosition="top"
+        initValues={initial}
+        allowEmpty
+        getFormApi={(api) => (formApi.current = api)}
+        onValueChange={() => setDirty(true)}
+        className="stack"
+        style={{ gap: 16 }}
       >
-        {value}
-      </p>
-      {hint ? (
-        <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
+        <Section
+          title="应用信息"
+          description="页面标题和通知标题前缀。"
+          extra={
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              {v?.version ? <Tag>当前 v{v.version}</Tag> : null}
+              {v?.latest_version ? (
+                v.update_available ? (
+                  <Tag color="orange" style={{ cursor: "pointer" }} onClick={versionCheck.openNotes}>
+                    可更新到 {v.latest_version} · 查看更新日志
+                  </Tag>
+                ) : (
+                  <Tag color="green">已是最新</Tag>
+                )
+              ) : null}
+              <Button size="small" icon={<IconRefresh />} loading={versionCheck.checking} onClick={versionCheck.check}>
+                检测更新
+              </Button>
+            </div>
+          }
+        >
+          <Form.Input field="app.title" label="应用标题" extraText="显示在侧边栏和浏览器标签上。" />
+          <Form.Input field="app.notificationPrefix" label="通知前缀" extraText="加在通知标题前面，留空不加。" />
+        </Section>
+
+        <Section title="登录鉴权" description="后台是否需要登录，以及登录令牌怎么签发。应用后立即生效。">
+          <Form.Switch field="auth.enabled" label="启用登录" extraText="关闭后打开页面直接进入后台，不显示登录页。" />
+          <Form.Input field="auth.username" label="管理员账号" />
+          <Form.Input field="auth.password" label="管理员密码" mode="password" extraText="应用后用于新的登录。" />
+          <Form.Input field="auth.tokenSecret" label="令牌签名密钥" mode="password" extraText="留空时使用安全主密钥。" />
+          <Form.InputNumber field="auth.sessionTTLHours" label="登录有效期（小时）" min={0} style={{ width: "100%" }} />
+        </Section>
+
+        <Section title="调度与保留策略" description="余额采集、倍率采集和历史数据清理的周期。Cron 带秒，共 6 段。">
+          <Form.Input field="scheduler.balanceCron" label="余额采集 Cron" extraText="余额与消费的同步周期。" className="mono" />
+          <Form.Input field="scheduler.rateCron" label="倍率采集 Cron" extraText="分组倍率的扫描周期。" className="mono" />
+          <Form.InputNumber field="scheduler.concurrency" label="并发数" extraText="每轮最多同时处理的渠道数。" min={1} style={{ width: "100%" }} />
+          <Form.Input field="scheduler.retention.cron" label="清理任务 Cron" extraText="留空则不清理历史数据。" className="mono" />
+          <Form.InputNumber field="scheduler.retention.monitorLogsDays" label="监控日志保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
+          <Form.InputNumber field="scheduler.retention.balanceSnapshotsDays" label="余额快照保留天数" extraText="余额与消费趋势图用这些数据。0 表示不清理。" min={0} style={{ width: "100%" }} />
+          <Form.InputNumber field="scheduler.retention.notificationLogsDays" label="通知记录保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
+          <Form.InputNumber field="scheduler.retention.announcementsDays" label="上游公告保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
+        </Section>
+
+        <Section title="通知策略" description="怎么过滤和重试通知。">
+          <Form.InputNumber field="notifications.minChangePct" label="最小涨跌幅（%）" extraText="变化幅度低于这个值的倍率变化不通知。" min={0} step={0.01} style={{ width: "100%" }} />
+          <Form.InputNumber field="notifications.balanceLowCooldownMinutes" label="余额不足冷却（分钟）" extraText="同一渠道两次余额告警的最短间隔。" min={0} style={{ width: "100%" }} />
+          <Form.InputNumber field="notifications.sendMaxAttempts" label="发送最大尝试次数" extraText="发送失败后最多尝试几次。" min={1} style={{ width: "100%" }} />
+        </Section>
+
+        <Section title="上游请求" description="访问上游站点时的超时和 User-Agent。">
+          <Form.InputNumber field="upstream.timeoutSeconds" label="超时（秒）" extraText="小于等于 0 时用默认的 30 秒。" min={0} style={{ width: "100%" }} />
+          <Form.Input field="upstream.userAgent" label="User-Agent" extraText="留空用默认值。" />
+        </Section>
+      </Form>
+
+      <div className="sticky-actions">
+        <Typography.Text type={dirty || pendingApply ? "warning" : "tertiary"} size="small">
+          {statusText}
+        </Typography.Text>
+        {query.data?.config_path ? (
+          <Typography.Text type="tertiary" size="small" className="mono truncate" style={{ flex: 1, minWidth: 0 }}>
+            {query.data.config_path}
+          </Typography.Text>
+        ) : (
+          <span style={{ flex: 1 }} />
+        )}
+        <Button onClick={handleApply} loading={applying} disabled={saving}>
+          应用
+        </Button>
+        <Button theme="solid" onClick={handleSave} loading={saving} disabled={applying}>
+          保存
+        </Button>
+      </div>
+
+      {versionCheck.notesOpen ? (
+        <Suspense fallback={null}>
+          <UpdateNotesModal visible onClose={versionCheck.closeNotes} version={v} />
+        </Suspense>
       ) : null}
     </div>
-  );
-}
-
-function EmptyPanel({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-background/70 px-4 py-6">
-      <p className="text-sm font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        {description}
-      </p>
-    </div>
-  );
-}
-
-function EmptyLine({ text }: { text: string }) {
-  return <p className="text-sm text-muted-foreground">{text}</p>;
-}
-
-function typeLabel(type: NotificationChannelType) {
-  const map: Record<NotificationChannelType, string> = {
-    telegram: "Telegram",
-    wecom: "企业微信",
-  };
-  return map[type] ?? type;
-}
-
-function captchaLabel(type: CaptchaConfig["type"]) {
-  const map: Record<CaptchaConfig["type"], string> = {
-    yescaptcha: "YesCaptcha",
-  };
-  return map[type] ?? type;
-}
-
-function formatCaptchaBalance(item: CaptchaConfig) {
-  if (item.last_balance == null) return "—";
-  if (item.balance_unit === "points") return `${decimal(item.last_balance, 0)} 点`;
-  return money(item.last_balance, { precise: true });
-}
-
-function notifyIcon(type: NotificationChannelType) {
-  const map: Partial<Record<NotificationChannelType, typeof Send>> = {
-    telegram: Send,
-    wecom: Send,
-  };
-  return map[type] ?? Send;
-}
-
-function parseSubCount(raw?: string) {
-  if (!raw) return 0;
-  try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.length : 0;
-  } catch {
-    return 0;
-  }
+  )
 }
