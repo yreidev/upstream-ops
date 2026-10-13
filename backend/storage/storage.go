@@ -104,11 +104,16 @@ func AutoMigrate(db *gorm.DB) error {
 		&NotificationChannel{},
 		&NotificationLog{},
 		&NotificationCooldown{},
+		&NotificationFailureState{},
 		&MonitorLog{},
+		&AppliedMigration{},
 	); err != nil {
 		return err
 	}
-	return backfillChannelTodayCostAt(db)
+	if err := backfillChannelTodayCostAt(db); err != nil {
+		return err
+	}
+	return runDataMigrations(db)
 }
 
 // backfillChannelTodayCostAt 给升级前写入的 today_cost 补上采集时间 today_cost_at。

@@ -30,6 +30,7 @@ func (r *Channels) Delete(id uint) error {
 			&CostSnapshot{},
 			&MonitorLog{},
 			&NotificationCooldown{},
+			&NotificationFailureState{},
 			&UpstreamAnnouncement{},
 		} {
 			if err := tx.Where("channel_id = ?", id).Delete(model).Error; err != nil {

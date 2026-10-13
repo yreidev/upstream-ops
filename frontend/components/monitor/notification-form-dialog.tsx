@@ -55,6 +55,8 @@ interface ConfigState {
 
 interface SubRow {
   channel_ids: number[]
+  /** 订阅全部渠道（含之后新增的） */
+  all_channels: boolean
   event_mode: "all" | "custom"
   events: NotificationEvent[]
   mode: "all" | "groups"
@@ -89,6 +91,7 @@ const notificationEventOptions: Array<{ id: string; label: string; events: Notif
   { id: "login_failed", label: "登录失败", events: ["login_failed"] },
   { id: "captcha_failed", label: "验证码失败", events: ["captcha_failed"] },
   { id: "monitor_failed", label: "采集失败", events: ["monitor_failed"] },
+  { id: "recovered", label: "故障恢复", events: ["recovered"] },
 ]
 
 const allNotificationEvents = Array.from(
@@ -120,6 +123,7 @@ function initialState(c?: NotificationChannel | null): FormState {
         const events = (s.events as NotificationEvent[] | undefined) ?? []
         return {
           channel_ids,
+          all_channels: s.all_channels === true,
           event_mode: events.length > 0 ? "custom" : "all",
           events,
           mode: s.mode === "groups" ? "groups" : "all",
@@ -179,7 +183,7 @@ export function NotificationFormDialog({
   function addSub() {
     setForm((f) => ({
       ...f,
-      subs: [...f.subs, { channel_ids: [], event_mode: "all", events: [], mode: "all", groups: [] }],
+      subs: [...f.subs, { channel_ids: [], all_channels: false, event_mode: "all", events: [], mode: "all", groups: [] }],
     }))
   }
 
@@ -202,7 +206,7 @@ export function NotificationFormDialog({
     try {
       // 校验订阅：未选上游的行禁止保存
       for (const s of form.subs) {
-        if (s.channel_ids.length === 0) {
+        if (!s.all_channels && s.channel_ids.length === 0) {
           throw new Error("订阅列表里有未选择上游的规则，请补全或删除")
         }
         if (s.event_mode === "custom" && s.events.length === 0) {
@@ -231,7 +235,9 @@ export function NotificationFormDialog({
           const rateEventsEnabled = hasRateEvents(s)
           const mode = rateEventsEnabled ? s.mode : "all"
           return {
-            channel_ids: s.channel_ids,
+            // 全部渠道时仍写入当前全部 ID，回滚到不认识 all_channels 的旧版本照样能用
+            channel_ids: s.all_channels && channels.data ? channels.data.map((c) => c.id) : s.channel_ids,
+            ...(s.all_channels ? { all_channels: true } : {}),
             mode,
             groups: mode === "groups" ? s.groups : [],
             events: s.event_mode === "custom" ? s.events : [],
@@ -476,8 +482,9 @@ interface SubRowEditorProps {
 function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }: SubRowEditorProps) {
   // 只有真正展开 "指定分组" 时才拉 rates，避免每行都打一次接口
   const showRateGroupFilter = hasRateEvents(row)
+  const effectiveChannelIDs = row.all_channels ? channels.map((c) => c.id) : row.channel_ids
   const rateFetchIDs =
-    showRateGroupFilter && row.mode === "groups" ? row.channel_ids : []
+    showRateGroupFilter && row.mode === "groups" ? effectiveChannelIDs : []
   const rates = useMultiChannelRates(rateFetchIDs)
 
   const channelNameMap = useMemo(() => {
@@ -541,17 +548,15 @@ function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }:
     onChange({ events: next })
   }
 
-  const selectedChannelCount = row.channel_ids.length
-  const allChannelsSelected =
-    channels.length > 0 && selectedChannelCount === channels.length
-  const someChannelsSelected = selectedChannelCount > 0 && !allChannelsSelected
-  const allChannelsChecked = allChannelsSelected ? true : someChannelsSelected ? "indeterminate" : false
+  const selectedChannelCount = effectiveChannelIDs.length
+  // 手动逐个勾满不等于"全部渠道"：之后新增的渠道不会自动加入，所以这里显示半选
+  const allChannelsChecked = row.all_channels ? true : selectedChannelCount > 0 ? "indeterminate" : false
 
   function toggleChannel(id: number, checked: boolean) {
     const next = checked
-      ? Array.from(new Set([...row.channel_ids, id]))
-      : row.channel_ids.filter((c) => c !== id)
-    onChange({ channel_ids: next })
+      ? Array.from(new Set([...effectiveChannelIDs, id]))
+      : effectiveChannelIDs.filter((c) => c !== id)
+    onChange({ channel_ids: next, all_channels: false })
   }
 
   return (
@@ -588,10 +593,10 @@ function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }:
                 disabled={disabled}
               >
                 <span className="truncate">
-                  {selectedChannelCount === 0
-                    ? "请选择渠道"
-                    : selectedChannelCount === channels.length
-                      ? "全部渠道"
+                  {row.all_channels
+                    ? "全部渠道（含之后新增的）"
+                    : selectedChannelCount === 0
+                      ? "请选择渠道"
                       : `已选 ${selectedChannelCount} 个渠道`}
                 </span>
                 <ChevronsUpDown className="ml-2 size-3.5 shrink-0 opacity-50" />
@@ -604,16 +609,19 @@ function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }:
                     <Checkbox
                       checked={allChannelsChecked}
                       onCheckedChange={(v) =>
-                        onChange({ channel_ids: v === true ? channels.map((c) => c.id) : [] })
+                        onChange({
+                          all_channels: v === true,
+                          channel_ids: v === true ? channels.map((c) => c.id) : [],
+                        })
                       }
                       disabled={disabled}
                     />
-                    <span className="font-medium">全选</span>
+                    <span className="font-medium">全部渠道（含之后新增的）</span>
                   </label>
                   <div className="h-px bg-border" />
                   {channels.map((c) => {
                     const id = `ch-${rowIndex}-${c.id}`
-                    const checked = row.channel_ids.includes(c.id)
+                    const checked = row.all_channels || row.channel_ids.includes(c.id)
                     return (
                       <label
                         key={c.id}
@@ -738,7 +746,7 @@ function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }:
 
       {showRateGroupFilter && row.mode === "groups" ? (
         <div className="space-y-1.5">
-          {row.channel_ids.length === 0 ? (
+          {effectiveChannelIDs.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">请先选择上游</p>
           ) : rates.loading ? (
             <p className="text-[11px] text-muted-foreground">加载分组…</p>
@@ -795,7 +803,7 @@ function SubRowEditor({ rowIndex, row, channels, onChange, onRemove, disabled }:
               </ScrollArea>
             </div>
           )}
-          {row.mode === "groups" && row.groups.length === 0 && row.channel_ids.length > 0 ? (
+          {row.mode === "groups" && row.groups.length === 0 && effectiveChannelIDs.length > 0 ? (
             <p className="text-[11px] text-warning">未勾选任何分组，倍率类事件不会命中</p>
           ) : null}
         </div>

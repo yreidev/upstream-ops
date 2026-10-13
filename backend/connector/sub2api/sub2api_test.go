@@ -123,6 +123,87 @@ func TestGetCosts(t *testing.T) {
 	}
 }
 
+func TestGetCostsFallsBackToUsageStatsWhenDashboardBlocked(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/usage/dashboard/stats", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/api/v1/usage/stats", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Errorf("authorization = %q", got)
+		}
+		q := r.URL.Query()
+		switch {
+		case q.Get("period") == "today" && q.Get("start_date") == "":
+			_, _ = w.Write([]byte(`{"code":0,"message":"","data":{"total_actual_cost":1.5}}`))
+		case q.Get("start_date") == sub2UsageEpoch && q.Get("period") == "":
+			_, _ = w.Write([]byte(`{"code":0,"message":"","data":{"total_actual_cost":88.25}}`))
+		default:
+			t.Errorf("unexpected query %q", r.URL.RawQuery)
+			http.Error(w, "bad", http.StatusBadRequest)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	res, err := New().GetCosts(context.Background(), &connector.Channel{SiteURL: srv.URL}, &connector.AuthSession{AccessToken: "token"})
+	if err != nil {
+		t.Fatalf("GetCosts: %v", err)
+	}
+	if res.TodayCost != 1.5 || res.TotalCost != 88.25 {
+		t.Fatalf("costs = %v / %v, want 1.5 / 88.25", res.TodayCost, res.TotalCost)
+	}
+}
+
+func TestGetCostsKeepsNonNotFoundDashboardError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/usage/dashboard/stats", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	})
+	mux.HandleFunc("/api/v1/usage/stats", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("fallback should not be called for 502")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := New().GetCosts(context.Background(), &connector.Channel{SiteURL: srv.URL}, &connector.AuthSession{AccessToken: "token"})
+	if err == nil || connector.StatusCode(err) != http.StatusBadGateway || !connector.IsTransient(err) {
+		t.Fatalf("err = %v, want transient 502", err)
+	}
+}
+
+func TestLoginMarksRejectedAccountPermanent(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    int
+		body      string
+		permanent bool
+	}{
+		{"invalid credentials", http.StatusUnauthorized, `{"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}`, true},
+		{"user not active", http.StatusForbidden, `{"code":403,"message":"user is not active","reason":"USER_NOT_ACTIVE"}`, true},
+		{"old version without reason", http.StatusForbidden, `{"code":403,"message":"user is not active"}`, true},
+		{"turnstile failed", http.StatusBadRequest, `{"code":400,"message":"turnstile verification failed","reason":"TURNSTILE_VERIFICATION_FAILED"}`, false},
+		{"rate limited", http.StatusTooManyRequests, `{"code":429,"message":"too many requests"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := New().Login(context.Background(), &connector.Channel{SiteURL: srv.URL, Username: "a@example.com", Password: "x"})
+			if err == nil {
+				t.Fatal("expected login error")
+			}
+			if got := connector.IsPermanent(err); got != tc.permanent {
+				t.Fatalf("IsPermanent(%v) = %v, want %v", err, got, tc.permanent)
+			}
+		})
+	}
+}
+
 func TestGetCostsAppliesUpstreamRechargeMultiplier(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/usage/dashboard/stats", func(w http.ResponseWriter, r *http.Request) {

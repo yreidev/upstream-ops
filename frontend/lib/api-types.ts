@@ -13,7 +13,8 @@ export type NotificationChannelType = "telegram" | "wecom"
 
 export type CaptchaProviderType = "yescaptcha"
 
-export type MonitorJob = "login" | "balance" | "rates"
+/** 监控日志的任务类型（backend/storage/model.go MonitorJob*） */
+export type MonitorJob = "login" | "session" | "balance" | "costs" | "rates"
 
 export type NotificationEvent =
   | "balance_low"
@@ -25,6 +26,7 @@ export type NotificationEvent =
   | "login_failed"
   | "captcha_failed"
   | "monitor_failed"
+  | "recovered"
 
 export interface Channel {
   id: number
@@ -129,6 +131,8 @@ export interface BalanceSnapshot {
 
 export interface NotificationSubscription {
   channel_ids: number[]
+  /** 订阅全部渠道（含之后新增的）；为 true 时忽略 channel_ids */
+  all_channels?: boolean
   mode: "all" | "groups"
   groups?: string[]
   events?: NotificationEvent[]

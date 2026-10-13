@@ -39,6 +39,9 @@ type Service struct {
 	upstream config.UpstreamConfig
 	locks    sync.Map
 
+	// loginBackoffs 定时任务的登录退避与暂停状态（见 login_backoff.go）。
+	loginBackoffs loginBackoffs
+
 	// apiKeyGroupSetCache 缓存"已创建密钥的分组集合"。
 	// 该集合需要分页拉取上游全部密钥计算，monitor 每次刷新和前端切页都会用到，
 	// 缓存以 channelID 为 key（TTL 见 apiKeyGroupSetTTL）。
@@ -329,6 +332,7 @@ func (s *Service) Update(id uint, in UpdateInput) (*storage.Channel, error) {
 	if err := s.Channels.Update(c); err != nil {
 		return nil, err
 	}
+	s.ResumeAutoLogin(c.ID)
 	return c, nil
 }
 
@@ -435,6 +439,7 @@ func validateCredential(channelType storage.ChannelType, mode storage.Credential
 
 func (s *Service) Delete(id uint) error {
 	_ = s.AuthSessions.Delete(id)
+	s.ResumeAutoLogin(id)
 	return s.Channels.Delete(id)
 }
 
@@ -450,6 +455,7 @@ func (s *Service) ClearLoginInfo(id uint) (*storage.Channel, error) {
 	if err := s.AuthSessions.Delete(c.ID); err != nil {
 		return nil, err
 	}
+	s.ResumeAutoLogin(c.ID)
 	if c.CredentialMode == storage.CredentialModeToken {
 		c.PasswordCipher = ""
 		c.LastError = ""
@@ -554,7 +560,7 @@ func (s *Service) prepareTurnstile(
 	siteKey, err := conn.GetTurnstileSiteKey(ctx, resolved)
 	if err != nil {
 		progress.Fail(ctx, progress.StageCaptcha, err.Error())
-		return fmt.Errorf("fetch turnstile site key: %w", err)
+		return &LoginError{Err: fmt.Errorf("fetch turnstile site key: %w", err)}
 	}
 	if siteKey == "" {
 		progress.OK(ctx, progress.StageCaptcha, "上游未开启 Turnstile，跳过")
@@ -563,7 +569,7 @@ func (s *Service) prepareTurnstile(
 	token, err := s.solveCaptcha(ctx, *c.CaptchaConfigID, siteKey, c.SiteURL)
 	if err != nil {
 		progress.Fail(ctx, progress.StageCaptcha, err.Error())
-		return fmt.Errorf("solve captcha: %w", err)
+		return &CaptchaError{Err: permanentCaptchaError(fmt.Errorf("solve captcha: %w", err))}
 	}
 	resolved.TurnstileToken = token
 	progress.OK(ctx, progress.StageCaptcha, "打码完成")
@@ -576,7 +582,7 @@ func (s *Service) solveCaptcha(ctx context.Context, captchaID uint, siteKey, pag
 		return "", err
 	}
 	if !cfg.Enabled {
-		return "", errors.New("captcha config disabled")
+		return "", connector.Permanent(errors.New("captcha config disabled"))
 	}
 	apiKey, err := s.Cipher.Decrypt(cfg.APIKeyCipher)
 	if err != nil {
@@ -589,7 +595,10 @@ func (s *Service) solveCaptcha(ctx context.Context, captchaID uint, siteKey, pag
 	return provider.SolveTurnstile(ctx, siteKey, pageURL)
 }
 
-// EnsureSession 优先复用未过期的 session，否则重新登录并加密回写。
+// EnsureSession 优先复用未过期的 session，否则刷新或重新登录并加密回写。
+//
+// 校验会话时遇到上游临时故障（超时、429、5xx，见 connector.IsTransient）不代表凭据失效：
+// 保留现有会话，本轮直接返回错误，不刷新、不重新登录，也不提示 token 失效。
 //
 // token 模式：
 //   - 跳过 AuthSessions 表与 Login 调用
@@ -606,30 +615,7 @@ func (s *Service) EnsureSession(
 	defer lock.Unlock()
 
 	if c.CredentialMode == storage.CredentialModeToken {
-		progress.Start(ctx, progress.StageSession, "使用用户提供的 token…")
-		session, err := s.buildSessionFromToken(c)
-		if err != nil {
-			progress.Fail(ctx, progress.StageSession, err.Error())
-			_ = s.Channels.SetLastError(c.ID, err.Error())
-			return nil, err
-		}
-		// 走一次 CheckAuth 确认 token 仍有效。失败时如果有 refresh_token，先尝试刷新并回写。
-		if err := conn.CheckAuth(ctx, resolved, session); err != nil {
-			if refreshed, ok, refreshErr := s.refreshProvidedTokenSession(ctx, c, resolved, conn, session); refreshErr != nil {
-				progress.Fail(ctx, progress.StageSession, refreshErr.Error())
-				_ = s.Channels.SetLastError(c.ID, refreshErr.Error())
-				return nil, refreshErr
-			} else if ok {
-				return refreshed, nil
-			}
-			msg := "token 已失效，请重新粘贴凭据：" + err.Error()
-			progress.Fail(ctx, progress.StageSession, msg)
-			_ = s.Channels.SetLastError(c.ID, msg)
-			return nil, errors.New(msg)
-		}
-		_ = s.Channels.SetLastError(c.ID, "")
-		progress.OK(ctx, progress.StageSession, "token 有效，跳过登录")
-		return session, nil
+		return s.ensureTokenSession(ctx, c, resolved, conn)
 	}
 
 	saved, err := s.AuthSessions.FindByChannel(c.ID)
@@ -644,9 +630,14 @@ func (s *Service) EnsureSession(
 		if saved.ExpiresAt != nil && time.Until(*saved.ExpiresAt) > SessionRefreshThreshold {
 			// 轻量校验现有 session，不通过则继续尝试 refresh_token / 重新登录。
 			progress.Start(ctx, progress.StageSession, "校验已有会话…")
-			if err := conn.CheckAuth(ctx, resolved, session); err == nil {
+			started := time.Now()
+			checkErr := conn.CheckAuth(ctx, resolved, session)
+			if checkErr == nil {
 				progress.OK(ctx, progress.StageSession, "复用现有会话")
 				return session, nil
+			}
+			if connector.IsTransient(checkErr) || ctx.Err() != nil {
+				return nil, s.sessionFailed(ctx, c.ID, started, fmt.Errorf("校验会话：%w", checkErr))
 			}
 			progress.OK(ctx, progress.StageSession, "会话校验失败，尝试刷新")
 		}
@@ -657,6 +648,65 @@ func (s *Service) EnsureSession(
 		}
 	}
 	return s.login(ctx, c, resolved, conn)
+}
+
+func (s *Service) ensureTokenSession(
+	ctx context.Context,
+	c *storage.Channel,
+	resolved *connector.Channel,
+	conn connector.Connector,
+) (*connector.AuthSession, error) {
+	progress.Start(ctx, progress.StageSession, "使用用户提供的 token…")
+	session, err := s.buildSessionFromToken(c)
+	if err != nil {
+		progress.Fail(ctx, progress.StageSession, err.Error())
+		_ = s.Channels.SetLastError(c.ID, err.Error())
+		return nil, &LoginError{Err: err}
+	}
+	// 走一次 CheckAuth 确认 token 仍有效。失败时如果有 refresh_token，先尝试刷新并回写。
+	started := time.Now()
+	if err := conn.CheckAuth(ctx, resolved, session); err != nil {
+		if connector.IsTransient(err) || ctx.Err() != nil {
+			return nil, s.sessionFailed(ctx, c.ID, started, fmt.Errorf("校验 token：%w", err))
+		}
+		if refreshed, ok, refreshErr := s.refreshProvidedTokenSession(ctx, c, resolved, conn, session); refreshErr != nil {
+			if !connector.IsTransient(refreshErr) {
+				refreshErr = &LoginError{Err: refreshErr}
+			}
+			progress.Fail(ctx, progress.StageSession, refreshErr.Error())
+			_ = s.Channels.SetLastError(c.ID, refreshErr.Error())
+			return nil, refreshErr
+		} else if ok {
+			return refreshed, nil
+		}
+		return nil, s.sessionFailed(ctx, c.ID, started,
+			&LoginError{Err: errors.New("token 已失效，请重新粘贴凭据：" + err.Error())})
+	}
+	_ = s.Channels.SetLastError(c.ID, "")
+	progress.OK(ctx, progress.StageSession, "token 有效，跳过登录")
+	return session, nil
+}
+
+// sessionFailed 记录一次校验 / 刷新会话失败：写监控日志、进度和 last_error，原样返回 err。
+func (s *Service) sessionFailed(ctx context.Context, channelID uint, started time.Time, err error) error {
+	s.appendMonitorLog(channelID, storage.MonitorJobSession, started, err)
+	progress.Fail(ctx, progress.StageSession, err.Error())
+	_ = s.Channels.SetLastError(channelID, err.Error())
+	return err
+}
+
+func (s *Service) appendMonitorLog(channelID uint, job storage.MonitorJob, started time.Time, err error) {
+	if s.MonitorLogs == nil {
+		return
+	}
+	_ = s.MonitorLogs.Append(&storage.MonitorLog{
+		ChannelID:    channelID,
+		Job:          job,
+		Success:      err == nil,
+		ErrorMessage: errString(err),
+		StartedAt:    started,
+		FinishedAt:   time.Now(),
+	})
 }
 
 func (s *Service) sessionLock(channelID uint) *sync.Mutex {
@@ -675,13 +725,15 @@ func (s *Service) refreshStoredSession(
 		return nil, false, nil
 	}
 	progress.Start(ctx, progress.StageSession, "使用 refresh_token 刷新会话…")
+	started := time.Now()
 	refreshed, err := refreshSession(ctx, resolved, conn, session)
 	if err != nil {
-		if !connector.ShouldLoginAfterRefreshError(err) {
-			progress.Fail(ctx, progress.StageSession, err.Error())
-			_ = s.Channels.SetLastError(c.ID, err.Error())
-			return nil, false, err
+		err = fmt.Errorf("刷新会话：%w", err)
+		// 临时故障时 refresh_token 多半还有效，重新登录只会多耗打码和上游会话配额。
+		if !connector.ShouldLoginAfterRefreshError(err) || connector.IsTransient(err) || ctx.Err() != nil {
+			return nil, false, s.sessionFailed(ctx, c.ID, started, err)
 		}
+		s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, err)
 		progress.OK(ctx, progress.StageSession, "刷新失败，重新登录")
 		return nil, false, nil
 	}
@@ -689,6 +741,7 @@ func (s *Service) refreshStoredSession(
 		progress.Fail(ctx, progress.StageSession, err.Error())
 		return nil, false, err
 	}
+	s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, nil)
 	_ = s.Channels.SetLastError(c.ID, "")
 	progress.OK(ctx, progress.StageSession, "会话刷新成功")
 	return refreshed, true, nil
@@ -705,19 +758,35 @@ func (s *Service) refreshProvidedTokenSession(
 		return nil, false, nil
 	}
 	progress.Start(ctx, progress.StageSession, "使用 refresh_token 刷新 token…")
-	refreshed, err := refreshSession(ctx, resolved, conn, session)
+	started := time.Now()
+	refreshed, err := s.refreshAndCheckToken(ctx, c, resolved, conn, session)
+	s.appendMonitorLog(c.ID, storage.MonitorJobSession, started, err)
 	if err != nil {
-		return nil, false, err
-	}
-	if err := conn.CheckAuth(ctx, resolved, refreshed); err != nil {
-		return nil, false, fmt.Errorf("刷新后的 token 校验失败：%w", err)
-	}
-	if err := s.persistTokenCredential(c, refreshed); err != nil {
 		return nil, false, err
 	}
 	_ = s.Channels.SetLastError(c.ID, "")
 	progress.OK(ctx, progress.StageSession, "token 刷新成功")
 	return refreshed, true, nil
+}
+
+func (s *Service) refreshAndCheckToken(
+	ctx context.Context,
+	c *storage.Channel,
+	resolved *connector.Channel,
+	conn connector.Connector,
+	session *connector.AuthSession,
+) (*connector.AuthSession, error) {
+	refreshed, err := refreshSession(ctx, resolved, conn, session)
+	if err != nil {
+		return nil, fmt.Errorf("刷新 token：%w", err)
+	}
+	if err := conn.CheckAuth(ctx, resolved, refreshed); err != nil {
+		return nil, fmt.Errorf("刷新后的 token 校验失败：%w", err)
+	}
+	if err := s.persistTokenCredential(c, refreshed); err != nil {
+		return nil, err
+	}
+	return refreshed, nil
 }
 
 func refreshSession(
@@ -768,7 +837,46 @@ func (s *Service) persistTokenCredential(c *storage.Channel, session *connector.
 	}
 }
 
+// login 打码（如需要）→ 登录 → 校验 → 持久化。调用方需持有渠道的 sessionLock。
+//
+// 定时任务（WithScheduled）受登录退避限制：连续失败后按 loginBackoffSteps 拉长间隔，
+// 永久错误（密码错误、账号停用、打码余额不足）暂停自动登录，直到配置变更或手动登录成功。
+// 手动登录不受限制，结果同样计入退避状态。
 func (s *Service) login(
+	ctx context.Context,
+	c *storage.Channel,
+	resolved *connector.Channel,
+	conn connector.Connector,
+) (*connector.AuthSession, error) {
+	if isScheduled(ctx) {
+		if err := s.checkLoginBackoff(c); err != nil {
+			progress.Fail(ctx, progress.StageLogin, err.Error())
+			return nil, err
+		}
+	}
+	started := time.Now()
+	session, err := s.attemptLogin(ctx, c, resolved, conn)
+	if err != nil && ctx.Err() == nil && s.loginBackoffs.recordFailure(c, err, time.Now()) {
+		err = fmt.Errorf("%w%s", err, autoLoginPausedNote)
+	}
+	s.appendMonitorLog(c.ID, storage.MonitorJobLogin, started, err)
+	if err != nil {
+		progress.Fail(ctx, progress.StageLogin, err.Error())
+		_ = s.AuthSessions.Delete(c.ID)
+		_ = s.Channels.SetLastError(c.ID, err.Error())
+		return nil, err
+	}
+	s.loginBackoffs.clear(c.ID)
+	if err := s.persistSession(c.ID, session); err != nil {
+		progress.Fail(ctx, progress.StageLogin, err.Error())
+		return nil, err
+	}
+	_ = s.Channels.SetLastError(c.ID, "")
+	progress.OK(ctx, progress.StageLogin, "登录成功")
+	return session, nil
+}
+
+func (s *Service) attemptLogin(
 	ctx context.Context,
 	c *storage.Channel,
 	resolved *connector.Channel,
@@ -778,38 +886,17 @@ func (s *Service) login(
 		return nil, err
 	}
 	progress.Start(ctx, progress.StageLogin, "登录上游…")
-	started := time.Now()
 	session, err := conn.Login(ctx, resolved)
-	if err == nil {
-		progress.Start(ctx, progress.StageSession, "验证登录会话…")
-		if checkErr := conn.CheckAuth(ctx, resolved, session); checkErr != nil {
-			err = fmt.Errorf("登录后鉴权失败：%w", checkErr)
-			progress.Fail(ctx, progress.StageSession, err.Error())
-		} else {
-			progress.OK(ctx, progress.StageSession, "登录会话有效")
-		}
-	}
-	finished := time.Now()
-	_ = s.MonitorLogs.Append(&storage.MonitorLog{
-		ChannelID:    c.ID,
-		Job:          storage.MonitorJobLogin,
-		Success:      err == nil,
-		ErrorMessage: errString(err),
-		StartedAt:    started,
-		FinishedAt:   finished,
-	})
 	if err != nil {
-		progress.Fail(ctx, progress.StageLogin, err.Error())
-		_ = s.AuthSessions.Delete(c.ID)
-		_ = s.Channels.SetLastError(c.ID, err.Error())
-		return nil, err
+		return nil, &LoginError{Err: err}
 	}
-	if err := s.persistSession(c.ID, session); err != nil {
-		progress.Fail(ctx, progress.StageLogin, err.Error())
-		return nil, err
+	progress.Start(ctx, progress.StageSession, "验证登录会话…")
+	if checkErr := conn.CheckAuth(ctx, resolved, session); checkErr != nil {
+		err := fmt.Errorf("登录后鉴权失败：%w", checkErr)
+		progress.Fail(ctx, progress.StageSession, err.Error())
+		return nil, &LoginError{Err: err}
 	}
-	_ = s.Channels.SetLastError(c.ID, "")
-	progress.OK(ctx, progress.StageLogin, "登录成功")
+	progress.OK(ctx, progress.StageSession, "登录会话有效")
 	return session, nil
 }
 
@@ -896,6 +983,9 @@ func (s *Service) TestLogin(ctx context.Context, channelID uint) error {
 		_, err = s.EnsureSession(ctx, c, resolved, conn)
 		return err
 	}
+	lock := s.sessionLock(c.ID)
+	lock.Lock()
+	defer lock.Unlock()
 	_, err = s.login(ctx, c, resolved, conn)
 	return err
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -90,7 +91,11 @@ func (c *Client) Login(ctx context.Context, ch *connector.Channel) (*connector.A
 		return nil, fmt.Errorf("sub2api login http: %w", err)
 	}
 	if resp.IsError() {
-		return nil, fmt.Errorf("sub2api login: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		loginErr := fmt.Errorf("sub2api login: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		if sub2LoginRejected(resp.Body()) {
+			return nil, connector.Permanent(loginErr)
+		}
+		return nil, loginErr
 	}
 	var wrapped sub2Resp
 	if err := json.Unmarshal(resp.Body(), &wrapped); err != nil {
@@ -203,22 +208,70 @@ func (c *Client) GetBalance(ctx context.Context, ch *connector.Channel, session 
 }
 
 func (c *Client) GetCosts(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) (*connector.CostResult, error) {
-	body, err := c.getJSON(ctx, strings.TrimRight(ch.SiteURL, "/")+"/api/v1/usage/dashboard/stats", session)
-	if err != nil {
-		return nil, fmt.Errorf("sub2api dashboard stats: %w", err)
-	}
+	site := strings.TrimRight(ch.SiteURL, "/")
 	var stats struct {
 		TodayActualCost float64 `json:"today_actual_cost"`
 		TotalActualCost float64 `json:"total_actual_cost"`
 	}
-	if err := json.Unmarshal(body, &stats); err != nil {
-		return nil, fmt.Errorf("sub2api dashboard stats decode: %w", err)
+	body, err := c.getJSON(ctx, site+"/api/v1/usage/dashboard/stats", session)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(body, &stats); err != nil {
+			return nil, fmt.Errorf("sub2api dashboard stats decode: %w", err)
+		}
+	case connector.StatusCode(err) == http.StatusNotFound:
+		// 有的站点在反代层屏蔽了仪表盘接口 /usage/dashboard/*（返回 404），
+		// 退回到"使用记录"页用的 /usage/stats：period=today 取今日，start_date 取足够早的日期得到累计。
+		if stats.TodayActualCost, err = c.usageStatsActualCost(ctx, site, session, url.Values{"period": {"today"}}); err != nil {
+			return nil, err
+		}
+		if stats.TotalActualCost, err = c.usageStatsActualCost(ctx, site, session, url.Values{"start_date": {sub2UsageEpoch}}); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("sub2api dashboard stats: %w", err)
 	}
 	multiplier := c.rechargeMultiplier(ctx, ch, session)
 	return &connector.CostResult{
 		TodayCost: connector.ApplyRechargeMultiplier(stats.TodayActualCost, multiplier, ch.RechargeMultiplierMode),
 		TotalCost: connector.ApplyRechargeMultiplier(stats.TotalActualCost, multiplier, ch.RechargeMultiplierMode),
 	}, nil
+}
+
+// sub2UsageEpoch 是查询累计消费时用的起始日期，早于任何 Sub2API 站点的上线时间。
+const sub2UsageEpoch = "2000-01-01"
+
+func (c *Client) usageStatsActualCost(ctx context.Context, site string, session *connector.AuthSession, query url.Values) (float64, error) {
+	body, err := c.getJSON(ctx, site+"/api/v1/usage/stats?"+query.Encode(), session)
+	if err != nil {
+		return 0, fmt.Errorf("sub2api usage stats: %w", err)
+	}
+	var stats struct {
+		TotalActualCost float64 `json:"total_actual_cost"`
+	}
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return 0, fmt.Errorf("sub2api usage stats decode: %w", err)
+	}
+	return stats.TotalActualCost, nil
+}
+
+// sub2LoginRejected 判断登录失败是不是账号本身的问题（密码错误、账号被停用），
+// 这类错误重试也不会好，要用户改了渠道配置才行。
+// 新版响应带 reason（internal/service/auth_service.go），老版本只能看 message。
+func sub2LoginRejected(body []byte) bool {
+	var payload struct {
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	switch payload.Reason {
+	case "INVALID_CREDENTIALS", "USER_NOT_ACTIVE":
+		return true
+	}
+	msg := strings.ToLower(payload.Message)
+	return strings.Contains(msg, "invalid email or password") || strings.Contains(msg, "user is not active")
 }
 
 func (c *Client) rechargeMultiplier(ctx context.Context, ch *connector.Channel, session *connector.AuthSession) *float64 {

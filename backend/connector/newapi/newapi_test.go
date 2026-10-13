@@ -134,6 +134,35 @@ func TestLoginNewAPIMissingUserFails(t *testing.T) {
 	}
 }
 
+func TestLoginMarksRejectedAccountPermanent(t *testing.T) {
+	cases := []struct {
+		message   string
+		permanent bool
+	}{
+		{"Username or password is incorrect, or user has been banned", true},
+		{"User has been banned", true},
+		{"用户名或密码错误，或用户已被封禁", true},
+		{"请先完成人机验证", false},
+		{"Database error, please contact the administrator", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.message, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"success":false,"message":"` + tc.message + `"}`))
+			}))
+			defer srv.Close()
+
+			_, err := New().Login(context.Background(), &connector.Channel{SiteURL: srv.URL, Username: "u", Password: "p"})
+			if err == nil {
+				t.Fatal("expected login error")
+			}
+			if got := connector.IsPermanent(err); got != tc.permanent {
+				t.Fatalf("IsPermanent(%v) = %v, want %v", err, got, tc.permanent)
+			}
+		})
+	}
+}
+
 // TestRefreshSessionPostsRefreshCookie 验证 RefreshSession 走 cookie 路径：
 // 请求必须携带 Cookie: new_api_refresh=<refresh>，不带 body，不携带 Authorization。
 // 成功响应返回新的 access_token，并通过 Set-Cookie 轮换 refresh token。

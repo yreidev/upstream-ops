@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sync"
+	"time"
 
 	"github.com/yreidev/upstream-ops/backend/storage"
 )
@@ -67,4 +69,28 @@ func Build(c *storage.NotificationChannel, decryptedConfig string) (Notifier, er
 		return nil, fmt.Errorf("unknown notifier type: %s", c.Type)
 	}
 	return f(decryptedConfig)
+}
+
+// sendTimeout 单次调用通知平台接口的超时。
+const sendTimeout = 15 * time.Second
+
+// SendError 是通知平台明确给出结果的发送失败，告诉 Dispatcher 要不要、隔多久重试。
+type SendError struct {
+	Err error
+	// RetryAfter 平台要求的等待时间（Telegram 429 的 parameters.retry_after、企业微信 45009 限频）。
+	RetryAfter time.Duration
+	// Permanent 重试也不会成功：token / webhook 无效、群聊不存在、参数错误等。
+	Permanent bool
+}
+
+func (e *SendError) Error() string { return e.Err.Error() }
+func (e *SendError) Unwrap() error { return e.Err }
+
+// requestError 去掉 HTTP 客户端错误里的请求 URL（Telegram bot token、企业微信 key 都在 URL 里），只留底层原因。
+func requestError(platform string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	return fmt.Errorf("%s request: %w", platform, err)
 }

@@ -631,3 +631,81 @@ func jsonNumber(v int) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestRefreshBalanceCostFailureKeepsBalanceAlertAndDefersFailure(t *testing.T) {
+	db := openTestDB(t)
+	channels := storage.NewChannels(db)
+	monitorLogs := storage.NewMonitorLogs(db)
+	notifies := storage.NewNotifications(db)
+	cipher, err := crypto.NewCipher("secret")
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+
+	var subjects []string
+	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Markdown struct {
+				Content string `json:"content"`
+			} `json:"markdown"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		subjects = append(subjects, strings.SplitN(body.Markdown.Content, "\n", 2)[0])
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer webhookSrv.Close()
+	if err := notifies.CreateChannel(&storage.NotificationChannel{
+		Name: "wecom", Type: storage.NotifyWecom, Enabled: true,
+		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
+	}); err != nil {
+		t.Fatalf("create notify channel: %v", err)
+	}
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"message":"","data":{"balance":1.5}}`))
+		case "/api/v1/usage/dashboard/stats":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiSrv.Close()
+
+	ch := &storage.Channel{
+		Name:             "sub",
+		Type:             storage.ChannelTypeSub2API,
+		SiteURL:          apiSrv.URL,
+		PasswordCipher:   mustEncrypt(t, cipher, `{"access_token":"tok"}`),
+		CredentialMode:   storage.CredentialModeToken,
+		MonitorEnabled:   true,
+		BalanceThreshold: 5,
+	}
+	if err := channels.Create(ch); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	channelSvc := channel.NewService(channels, storage.NewAuthSessions(db), storage.NewCaptchas(db), storage.NewRates(db), monitorLogs, cipher)
+	dispatcher := notify.NewDispatcher(notifies, cipher, logger, notify.Policy{SendMaxAttempts: 1})
+	svc := NewService(channels, storage.NewUpstreamAnnouncements(db), storage.NewRates(db), monitorLogs, channelSvc, dispatcher, logger)
+
+	if err := svc.RefreshBalance(context.Background(), ch); err == nil || !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("RefreshBalance err = %v, want cost failure", err)
+	}
+	if len(subjects) != 1 || subjects[0] != "**sub 余额低于阈值**" {
+		t.Fatalf("notifications = %q, want only the balance alert (first cost failure is deferred)", subjects)
+	}
+
+	logs, _ := monitorLogs.List(ch.ID, 10)
+	jobs := map[storage.MonitorJob]bool{}
+	for _, l := range logs {
+		jobs[l.Job] = l.Success
+	}
+	if ok, found := jobs[storage.MonitorJobBalance]; !found || !ok {
+		t.Fatalf("balance log missing or failed: %+v", logs)
+	}
+	if ok, found := jobs[storage.MonitorJobCosts]; !found || ok {
+		t.Fatalf("failed costs log missing: %+v", logs)
+	}
+}

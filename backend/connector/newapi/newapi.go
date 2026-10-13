@@ -110,7 +110,11 @@ func (c *Client) Login(ctx context.Context, ch *connector.Channel) (*connector.A
 		return nil, fmt.Errorf("newapi login decode: %w", err)
 	}
 	if !wrapped.Success {
-		return nil, fmt.Errorf("newapi login: %s", wrapped.Message)
+		loginErr := fmt.Errorf("newapi login: %s", wrapped.Message)
+		if newAPILoginRejected(wrapped.Message) {
+			return nil, connector.Permanent(loginErr)
+		}
+		return nil, loginErr
 	}
 
 	// 新版 NewAPI (controller/user.go setupLoginAtAuthVersion) 返回：
@@ -1465,4 +1469,22 @@ func valueOr[T any](ptr *T, fallback T) T {
 		return fallback
 	}
 	return *ptr
+}
+
+// newAPILoginRejected 判断登录失败是不是账号本身的问题（密码错误、账号被封禁），
+// 这类错误重试也不会好，要用户改了渠道配置才行。
+// 新版返回英文原文（controller/user.go Login、setupLoginAtAuthVersion），老版本返回中文。
+func newAPILoginRejected(message string) bool {
+	msg := strings.ToLower(message)
+	for _, marker := range []string{
+		"username or password is incorrect",
+		"user has been banned",
+		"用户名或密码错误",
+		"用户已被封禁",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

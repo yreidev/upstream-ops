@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/redact"
 	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
@@ -20,6 +21,9 @@ type Dispatcher struct {
 	mu       sync.RWMutex
 	policy   Policy
 	cooldown CooldownStore
+
+	// failureMu 串行化失败计数的读改写（见 ReportFailure / ReportSuccess）。
+	failureMu sync.Mutex
 }
 
 // NewDispatcher 用 *storage.Notifications 作为 CooldownStore 的具体实现，
@@ -246,10 +250,9 @@ func (d *Dispatcher) withNotificationPrefix(msg Message) Message {
 // 重试策略：
 //   - 最多 SendMaxAttempts 次（含首发）
 //   - 退避 = 2^(attempt-1) * 1s，上限 30s（即 1s / 2s / 4s / 8s / 16s / 30s ...）
+//   - 平台明确要求等待（SendError.RetryAfter，如 Telegram 429）时按它等；超过 maxRetryAfter 就不再重试
+//   - 平台明确拒绝（SendError.Permanent，如 token 无效、群聊不存在）时不重试
 //   - ctx 被取消时立即返回，不再等待
-//
-// 注意：所有错误都会重试，包括 "Telegram 401 unauthorized" 这类永久错误。
-// 单用户场景下，简单胜过复杂；如果反复重试相同 401，反正最多 SendMaxAttempts 次就停了。
 func (d *Dispatcher) sendWithRetry(ctx context.Context, channelName string, n Notifier, msg Message) error {
 	maxAttempts := d.Policy().SendMaxAttempts
 	if maxAttempts <= 0 {
@@ -269,13 +272,22 @@ func (d *Dispatcher) sendWithRetry(ctx context.Context, channelName string, n No
 			break
 		}
 		delay := backoffDelay(attempt)
+		var sendErr *SendError
+		if errors.As(err, &sendErr) {
+			if sendErr.Permanent || sendErr.RetryAfter > maxRetryAfter {
+				break
+			}
+			if sendErr.RetryAfter > delay {
+				delay = sendErr.RetryAfter
+			}
+		}
 		if d.log != nil {
 			d.log.Warn("notify send failed, will retry",
 				"channel", channelName,
 				"attempt", attempt,
 				"max_attempts", maxAttempts,
 				"retry_in", delay,
-				"err", err,
+				"err", redact.Secrets(err.Error()),
 			)
 		}
 		select {
@@ -286,6 +298,9 @@ func (d *Dispatcher) sendWithRetry(ctx context.Context, channelName string, n No
 	}
 	return lastErr
 }
+
+// maxRetryAfter 平台要求等待超过这个时间就放弃本条，不让一次扫描卡太久。
+const maxRetryAfter = time.Minute
 
 // backoffDelay 指数退避：第 1 次重试等 1s，第 2 次等 2s，第 3 次等 4s …
 // 上限 30s 避免重试链拉得过长。
@@ -308,7 +323,7 @@ func (d *Dispatcher) logResult(channelID uint, msg Message, sendErr error) {
 		Success:           sendErr == nil,
 	}
 	if sendErr != nil {
-		log.ErrorMessage = sendErr.Error()
+		log.ErrorMessage = redact.Secrets(sendErr.Error())
 	}
 	if err := d.repo.AppendLog(log); err != nil && d.log != nil {
 		d.log.Warn("append notification log", "err", err)

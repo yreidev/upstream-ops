@@ -131,5 +131,8 @@ func updateCaptcha(c *gin.Context, d *Deps) {
 		fail(c, http.StatusInternalServerError, err)
 		return
 	}
+	if d.ChannelSvc != nil {
+		d.ChannelSvc.ResumeAutoLoginForCaptcha(cfg.ID)
+	}
 	c.JSON(http.StatusOK, gin.H{"data": cfg})
 }

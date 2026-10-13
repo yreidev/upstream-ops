@@ -124,3 +124,20 @@ func TestRateNotificationBatchMarkdownAndSubscriptionFilter(t *testing.T) {
 		t.Fatalf("message = %#v", msg)
 	}
 }
+
+func TestSubscriptionAllChannelsMatchesNewUpstreams(t *testing.T) {
+	subs, err := ParseSubscriptions(`[{"channel_ids":[1,2],"all_channels":true,"mode":"all","events":["login_failed"]}]`)
+	if err != nil || len(subs) != 1 || !subs[0].AllChannels {
+		t.Fatalf("parse = %+v, %v", subs, err)
+	}
+	if !subs[0].Matches(Message{ChannelID: 7, Event: storage.EventLoginFailed}) {
+		t.Fatal("all_channels subscription should match an upstream added later")
+	}
+	if subs[0].Matches(Message{ChannelID: 7, Event: storage.EventBalanceLow}) {
+		t.Fatal("all_channels must still honor the event filter")
+	}
+	plain := Subscription{ChannelIDs: []uint{1, 2}, Mode: SubscriptionModeAll}
+	if plain.Matches(Message{ChannelID: 7, Event: storage.EventLoginFailed}) {
+		t.Fatal("explicit channel list must not match other upstreams")
+	}
+}

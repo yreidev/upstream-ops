@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -133,4 +134,67 @@ func (r *Notifications) TryClaimCooldown(channelID uint, event NotificationEvent
 func (r *Notifications) ResetCooldown(channelID uint, event NotificationEvent) error {
 	return r.db.Where("channel_id = ? AND event = ?", channelID, event).
 		Delete(&NotificationCooldown{}).Error
+}
+
+// RecordFailure 给 (channelID, kind) 的连续失败次数加一并返回最新状态；没有记录时新建。
+// 调用方负责并发互斥（notify.Dispatcher 用一把锁串行化）。
+func (r *Notifications) RecordFailure(channelID uint, kind string, errText string, at time.Time) (*NotificationFailureState, error) {
+	var state NotificationFailureState
+	err := r.db.Where("channel_id = ? AND kind = ?", channelID, kind).Take(&state).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		state = NotificationFailureState{
+			ChannelID:     channelID,
+			Kind:          kind,
+			Failures:      1,
+			FirstFailedAt: at,
+			LastFailedAt:  at,
+			LastError:     errText,
+		}
+		if err := r.db.Create(&state).Error; err != nil {
+			return nil, err
+		}
+		return &state, nil
+	case err != nil:
+		return nil, err
+	}
+	state.Failures++
+	state.LastFailedAt = at
+	state.LastError = errText
+	if err := r.db.Model(&NotificationFailureState{}).
+		Where("channel_id = ? AND kind = ?", channelID, kind).
+		Updates(map[string]any{
+			"failures":       state.Failures,
+			"last_failed_at": at,
+			"last_error":     errText,
+		}).Error; err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// MarkFailureNotified 记下 (channelID, kind) 最近一次发失败通知的时间。
+func (r *Notifications) MarkFailureNotified(channelID uint, kind string, at time.Time) error {
+	return r.db.Model(&NotificationFailureState{}).
+		Where("channel_id = ? AND kind = ?", channelID, kind).
+		Update("notified_at", at).Error
+}
+
+// ClearFailures 删除 channelID 下这些类别的失败状态，返回删除前的记录（调用方据此决定是否发恢复通知）。
+func (r *Notifications) ClearFailures(channelID uint, kinds []string) ([]NotificationFailureState, error) {
+	if len(kinds) == 0 {
+		return nil, nil
+	}
+	var states []NotificationFailureState
+	if err := r.db.Where("channel_id = ? AND kind IN ?", channelID, kinds).Find(&states).Error; err != nil {
+		return nil, err
+	}
+	if len(states) == 0 {
+		return nil, nil
+	}
+	if err := r.db.Where("channel_id = ? AND kind IN ?", channelID, kinds).
+		Delete(&NotificationFailureState{}).Error; err != nil {
+		return nil, err
+	}
+	return states, nil
 }

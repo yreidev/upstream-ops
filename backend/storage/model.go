@@ -251,6 +251,8 @@ const (
 	EventLoginFailed          NotificationEvent = "login_failed"
 	EventCaptchaFailed        NotificationEvent = "captcha_failed"
 	EventMonitorFailed        NotificationEvent = "monitor_failed"
+	// EventRecovered 之前发过失败通知（登录、打码、采集）的渠道恢复正常。
+	EventRecovered NotificationEvent = "recovered"
 )
 
 // NotificationLog 通知发送记录。
@@ -288,12 +290,38 @@ type NotificationCooldown struct {
 
 func (NotificationCooldown) TableName() string { return "notification_cooldowns" }
 
+// NotificationFailureState 某上游渠道某类失败的连续计数，用于失败通知去重（见 notify.Dispatcher.ReportFailure）。
+//
+// 业务键 (ChannelID, Kind)：ChannelID 指上游渠道，Kind 是失败类别（login / captcha / session / balance / costs / rates）。
+// 同类成功一次就整行删除；NotifiedAt 非空表示已经发过失败通知，删除时要补发一条恢复通知。
+type NotificationFailureState struct {
+	ChannelID     uint       `gorm:"primaryKey" json:"channel_id"`
+	Kind          string     `gorm:"primaryKey;size:32" json:"kind"`
+	Failures      int        `gorm:"not null" json:"failures"`
+	FirstFailedAt time.Time  `gorm:"not null" json:"first_failed_at"`
+	LastFailedAt  time.Time  `gorm:"not null" json:"last_failed_at"`
+	LastError     string     `gorm:"type:text" json:"last_error"`
+	NotifiedAt    *time.Time `json:"notified_at,omitempty"`
+}
+
+func (NotificationFailureState) TableName() string { return "notification_failure_states" }
+
+// AppliedMigration 记录已经执行过的一次性数据迁移，避免重复执行。
+type AppliedMigration struct {
+	Name      string    `gorm:"primaryKey;size:128"`
+	AppliedAt time.Time `gorm:"not null"`
+}
+
+func (AppliedMigration) TableName() string { return "applied_migrations" }
+
 // MonitorJob 监控任务类型。
 type MonitorJob string
 
 const (
 	MonitorJobLogin   MonitorJob = "login"
+	MonitorJobSession MonitorJob = "session" // 校验或刷新已保存的会话 / token
 	MonitorJobBalance MonitorJob = "balance"
+	MonitorJobCosts   MonitorJob = "costs"
 	MonitorJobRates   MonitorJob = "rates"
 )
 

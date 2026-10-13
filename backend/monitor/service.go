@@ -47,7 +47,9 @@ func NewService(
 }
 
 // ScanAllBalances 扫描所有启用监控的渠道余额。单个失败不影响其他。
+// 定时任务调用，受登录退避限制（见 channel.WithScheduled）。
 func (s *Service) ScanAllBalances(ctx context.Context) {
+	ctx = channel.WithScheduled(ctx)
 	list, err := s.channels.ListMonitorEnabled()
 	if err != nil {
 		s.log.Error("list channels", "err", err)
@@ -56,13 +58,22 @@ func (s *Service) ScanAllBalances(ctx context.Context) {
 	for i := range list {
 		c := list[i]
 		if err := s.RefreshBalance(ctx, &c); err != nil {
-			s.log.Warn("refresh balance failed", "channel", c.Name, "err", err)
+			s.logScanError("refresh balance failed", c.Name, err)
 		}
 	}
 }
 
-// ScanAllRates 扫描所有启用监控的渠道倍率。
+func (s *Service) logScanError(msg, channelName string, err error) {
+	if channel.IsBackoff(err) {
+		s.log.Debug(msg, "channel", channelName, "err", err)
+		return
+	}
+	s.log.Warn(msg, "channel", channelName, "err", err)
+}
+
+// ScanAllRates 扫描所有启用监控的渠道倍率。定时任务调用，受登录退避限制。
 func (s *Service) ScanAllRates(ctx context.Context) {
+	ctx = channel.WithScheduled(ctx)
 	list, err := s.channels.ListMonitorEnabled()
 	if err != nil {
 		s.log.Error("list channels", "err", err)
@@ -72,7 +83,7 @@ func (s *Service) ScanAllRates(ctx context.Context) {
 	for i := range list {
 		c := list[i]
 		if err := s.refreshRates(ctx, &c, &batch); err != nil {
-			s.log.Warn("refresh rates failed", "channel", c.Name, "err", err)
+			s.logScanError("refresh rates failed", c.Name, err)
 		}
 	}
 	if !batch.Empty() {
@@ -84,27 +95,19 @@ func (s *Service) ScanAllRates(ctx context.Context) {
 func (s *Service) RefreshBalance(ctx context.Context, c *storage.Channel) error {
 	resolved, conn, session, err := s.prepare(ctx, c)
 	if err != nil {
-		s.notifyError(ctx, c, storage.EventLoginFailed, "登录失败", err)
 		return err
 	}
 
 	progress.Start(ctx, progress.StageBalance, "拉取余额…")
 	started := time.Now()
 	res, err := conn.GetBalance(ctx, resolved, session)
-	finished := time.Now()
-	_ = s.monitorLogs.Append(&storage.MonitorLog{
-		ChannelID:    c.ID,
-		Job:          storage.MonitorJobBalance,
-		Success:      err == nil,
-		ErrorMessage: errString(err),
-		StartedAt:    started,
-		FinishedAt:   finished,
-	})
+	s.appendMonitorLog(c.ID, storage.MonitorJobBalance, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageBalance, err.Error())
-		s.notifyError(ctx, c, storage.EventMonitorFailed, "余额采集失败", err)
+		s.reportFailure(ctx, c, notify.FailureBalance, err)
 		return err
 	}
+	s.reportSuccess(ctx, c, notify.FailureBalance)
 
 	sampledAt := res.SampledAt
 	if sampledAt.IsZero() {
@@ -121,13 +124,27 @@ func (s *Service) RefreshBalance(ctx context.Context, c *storage.Channel) error 
 	progress.OK(ctx, progress.StageBalance, fmt.Sprintf("当前余额 %.4f", res.Balance),
 		map[string]any{"balance": res.Balance})
 
+	// 余额阈值检查放在消费采集之前：消费接口出错不能连带吞掉低余额提醒。
+	if c.BalanceThreshold > 0 && res.Balance < c.BalanceThreshold {
+		body := fmt.Sprintf("当前余额: %.4f，阈值: %.4f", res.Balance, c.BalanceThreshold)
+		_ = s.dispatcher.Dispatch(ctx, notify.Message{
+			Event:     storage.EventBalanceLow,
+			ChannelID: c.ID,
+			Subject:   fmt.Sprintf("%s 余额低于阈值", c.Name),
+			Body:      body,
+		})
+	}
+
 	progress.Start(ctx, progress.StageCost, "拉取消费…")
+	started = time.Now()
 	costRes, err := conn.GetCosts(ctx, resolved, session)
+	s.appendMonitorLog(c.ID, storage.MonitorJobCosts, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageCost, err.Error())
-		s.notifyError(ctx, c, storage.EventMonitorFailed, "消费采集失败", err)
+		s.reportFailure(ctx, c, notify.FailureCosts, err)
 		return err
 	}
+	s.reportSuccess(ctx, c, notify.FailureCosts)
 	costAt := time.Now()
 	if err := s.channels.UpdateCosts(c.ID, costRes.TodayCost, costRes.TotalCost, costAt); err != nil {
 		progress.Fail(ctx, progress.StageCost, err.Error())
@@ -140,16 +157,6 @@ func (s *Service) RefreshBalance(ctx context.Context, c *storage.Channel) error 
 	})
 	progress.OK(ctx, progress.StageCost, fmt.Sprintf("今日 %0.4f / 累计 %0.4f", costRes.TodayCost, costRes.TotalCost),
 		map[string]any{"today_cost": costRes.TodayCost, "total_cost": costRes.TotalCost})
-
-	if c.BalanceThreshold > 0 && res.Balance < c.BalanceThreshold {
-		body := fmt.Sprintf("当前余额: %.4f，阈值: %.4f", res.Balance, c.BalanceThreshold)
-		_ = s.dispatcher.Dispatch(ctx, notify.Message{
-			Event:     storage.EventBalanceLow,
-			ChannelID: c.ID,
-			Subject:   fmt.Sprintf("%s 余额低于阈值", c.Name),
-			Body:      body,
-		})
-	}
 	return nil
 }
 
@@ -168,27 +175,19 @@ func (s *Service) RefreshRates(ctx context.Context, c *storage.Channel) error {
 func (s *Service) refreshRates(ctx context.Context, c *storage.Channel, batch *notify.RateNotificationBatch) error {
 	resolved, conn, session, err := s.prepare(ctx, c)
 	if err != nil {
-		s.notifyError(ctx, c, storage.EventLoginFailed, "登录失败", err)
 		return err
 	}
 
 	progress.Start(ctx, progress.StageRates, "拉取分组倍率…")
 	started := time.Now()
 	results, err := conn.GetRates(ctx, resolved, session)
-	finished := time.Now()
-	_ = s.monitorLogs.Append(&storage.MonitorLog{
-		ChannelID:    c.ID,
-		Job:          storage.MonitorJobRates,
-		Success:      err == nil,
-		ErrorMessage: errString(err),
-		StartedAt:    started,
-		FinishedAt:   finished,
-	})
+	s.appendMonitorLog(c.ID, storage.MonitorJobRates, started, err)
 	if err != nil {
 		progress.Fail(ctx, progress.StageRates, err.Error())
-		s.notifyError(ctx, c, storage.EventMonitorFailed, "倍率采集失败", err)
+		s.reportFailure(ctx, c, notify.FailureRates, err)
 		return err
 	}
+	s.reportSuccess(ctx, c, notify.FailureRates)
 
 	now := time.Now()
 	existing, err := s.rates.ListByChannel(c.ID)
@@ -322,7 +321,21 @@ func (s *Service) refreshRates(ctx context.Context, c *storage.Channel, batch *n
 	return nil
 }
 
+// prepare 解密渠道并拿到可用会话，同时上报会话相关的失败 / 恢复。
 func (s *Service) prepare(ctx context.Context, c *storage.Channel) (*connector.Channel, connector.Connector, *connector.AuthSession, error) {
+	resolved, conn, session, err := s.ensureSession(ctx, c)
+	if err != nil {
+		// 登录退避跳过的这一轮没有请求上游，不算新的失败。
+		if !channel.IsBackoff(err) {
+			s.reportFailure(ctx, c, prepareFailureKind(err), err)
+		}
+		return nil, nil, nil, err
+	}
+	s.reportSuccess(ctx, c, notify.FailureLogin, notify.FailureCaptcha, notify.FailureSession)
+	return resolved, conn, session, nil
+}
+
+func (s *Service) ensureSession(ctx context.Context, c *storage.Channel) (*connector.Channel, connector.Connector, *connector.AuthSession, error) {
 	resolved, err := s.channelSvc.Resolve(ctx, c)
 	if err != nil {
 		return nil, nil, nil, err
@@ -339,12 +352,48 @@ func (s *Service) prepare(ctx context.Context, c *storage.Channel) (*connector.C
 	return resolved, conn, session, nil
 }
 
-func (s *Service) notifyError(ctx context.Context, c *storage.Channel, event storage.NotificationEvent, subject string, err error) {
-	_ = s.dispatcher.Dispatch(ctx, notify.Message{
-		Event:     event,
-		ChannelID: c.ID,
-		Subject:   fmt.Sprintf("%s %s", c.Name, subject),
-		Body:      err.Error(),
+// prepareFailureKind 按出错环节归类：打码、登录，其余（会话校验 / 刷新失败、上游暂时不可用）归为会话。
+func prepareFailureKind(err error) notify.FailureKind {
+	switch {
+	case channel.IsCaptchaError(err):
+		return notify.FailureCaptcha
+	case channel.IsLoginError(err):
+		return notify.FailureLogin
+	default:
+		return notify.FailureSession
+	}
+}
+
+// reportFailure 交给 Dispatcher 做失败去重；永久错误（密码错误、打码余额不足等）立即通知。
+func (s *Service) reportFailure(ctx context.Context, c *storage.Channel, kind notify.FailureKind, err error) {
+	if ctx.Err() == context.Canceled {
+		return // 手动刷新时用户关掉了页面，不算失败
+	}
+	if reportErr := s.dispatcher.ReportFailure(ctx, notify.Failure{
+		ChannelID:   c.ID,
+		ChannelName: c.Name,
+		Kind:        kind,
+		Err:         err,
+		Immediate:   connector.IsPermanent(err),
+	}); reportErr != nil {
+		s.log.Warn("report failure", "channel", c.Name, "kind", kind, "err", reportErr)
+	}
+}
+
+func (s *Service) reportSuccess(ctx context.Context, c *storage.Channel, kinds ...notify.FailureKind) {
+	if err := s.dispatcher.ReportSuccess(ctx, c.ID, c.Name, kinds...); err != nil {
+		s.log.Warn("report success", "channel", c.Name, "err", err)
+	}
+}
+
+func (s *Service) appendMonitorLog(channelID uint, job storage.MonitorJob, started time.Time, err error) {
+	_ = s.monitorLogs.Append(&storage.MonitorLog{
+		ChannelID:    channelID,
+		Job:          job,
+		Success:      err == nil,
+		ErrorMessage: errString(err),
+		StartedAt:    started,
+		FinishedAt:   time.Now(),
 	})
 }
 

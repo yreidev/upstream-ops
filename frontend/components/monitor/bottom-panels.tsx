@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bell,
+  CheckCircle2,
   RefreshCw,
   KeyRound,
   Pencil,
@@ -59,6 +60,7 @@ const eventMeta: Record<NotificationEvent, { icon: LucideIcon; cls: string }> = 
   rate_removed: { icon: Trash2, cls: "text-warning" },
   announcement: { icon: Bell, cls: "text-brand" },
   monitor_failed: { icon: ShieldX, cls: "text-danger" },
+  recovered: { icon: CheckCircle2, cls: "text-success" },
 }
 
 const FEED_PREVIEW_SIZE = 10

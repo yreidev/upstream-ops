@@ -30,6 +30,8 @@ type channelService interface {
 	Update(id uint, in channel.UpdateInput) (*storage.Channel, error)
 	Delete(id uint) error
 	ClearLoginInfo(id uint) (*storage.Channel, error)
+	// ResumeAutoLoginForCaptcha 打码配置被修改后，解除因它出错而暂停自动登录的渠道。
+	ResumeAutoLoginForCaptcha(captchaID uint)
 	TestLogin(ctx context.Context, channelID uint) error
 	RedeemCode(ctx context.Context, channelID uint, code string) (*connector.RedeemResult, error)
 	GetRechargeInfo(ctx context.Context, channelID uint) (*connector.RechargeInfo, error)
