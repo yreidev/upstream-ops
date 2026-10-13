@@ -30,6 +30,10 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # actions/checkout 会先 git init，没设默认分支名时 git 每次都打印一段 hint；按 git 的提示把默认分支设成 main。
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
 
 jobs:
   test:
@@ -37,7 +41,7 @@ jobs:
 
   build-and-push:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -105,7 +109,7 @@ jobs:
   release:
     needs: build-and-push
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

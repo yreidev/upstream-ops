@@ -108,10 +108,11 @@ export function AppShell() {
     document.title = appTitle
   }, [appTitle])
 
-  // 换页时收起手机上的导航抽屉，并回到页面顶部。
+  // 换页时收起手机上的导航抽屉，并回到页面顶部。桌面滚的是内容区，手机滚的是整个页面，两个都归零。
   useEffect(() => {
     setDrawerOpen(false)
     document.querySelector(".app-content")?.scrollTo({ top: 0 })
+    window.scrollTo({ top: 0 })
   }, [location.pathname])
 
   // “上次采集”取所有渠道里最近的一次余额采集时间，说明页面上的数据有多新。

@@ -736,7 +736,7 @@ func (c *Client) CreateAPIKey(ctx context.Context, ch *connector.Channel, sessio
 		return nil, fmt.Errorf("newapi create api key http: %w", err)
 	}
 	if resp.IsError() {
-		return nil, fmt.Errorf("newapi create api key: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		return nil, newAPIKeyWriteError("newapi create api key", resp)
 	}
 	data, err := decodeNewAPIWriteData(resp.Body(), "newapi create api key")
 	if err != nil {
@@ -845,7 +845,7 @@ func (c *Client) putToken(ctx context.Context, url string, session *connector.Au
 		return newAPIToken{}, fmt.Errorf("%s http: %w", prefix, err)
 	}
 	if resp.IsError() {
-		return newAPIToken{}, fmt.Errorf("%s: %w", prefix, connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		return newAPIToken{}, newAPIKeyWriteError(prefix, resp)
 	}
 	data, err := decodeNewAPIWriteData(resp.Body(), prefix)
 	if err != nil {
@@ -883,7 +883,7 @@ func (c *Client) DeleteAPIKey(ctx context.Context, ch *connector.Channel, sessio
 		return fmt.Errorf("newapi delete api key http: %w", err)
 	}
 	if resp.IsError() {
-		return fmt.Errorf("newapi delete api key: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		return newAPIKeyWriteError("newapi delete api key", resp)
 	}
 	return decodeNewAPIWrite(resp.Body(), "newapi delete api key")
 }
@@ -899,7 +899,7 @@ func (c *Client) RevealAPIKey(ctx context.Context, ch *connector.Channel, sessio
 		return "", fmt.Errorf("newapi reveal api key http: %w", err)
 	}
 	if resp.IsError() {
-		return "", fmt.Errorf("newapi reveal api key: %w", connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+		return "", newAPIKeyWriteError("newapi reveal api key", resp)
 	}
 	data, err := decodeNewAPIWriteData(resp.Body(), "newapi reveal api key")
 	if err != nil {
@@ -1459,6 +1459,36 @@ func buildNewAPIUpdateToken(current newAPIToken, req connector.APIKeyUpdateReque
 		body["cross_group_retry"] = *req.CrossGroupRetry
 	}
 	return body
+}
+
+const (
+	// newAPISessionHint 补在“需要网页登录会话”报错后面的处理办法。
+	newAPISessionHint = "这个站点只允许网页登录的会话改动密钥，渠道凭据是系统访问令牌时请改填 Cookie，或改用账号密码登录"
+	// newAPIOriginHint 补在“需要浏览器来源”报错后面：站点只接受从它自己网页上发起的改动。
+	newAPIOriginHint = "这个站点只允许在它自己的网页上改动密钥，请到站点网页上操作"
+)
+
+// newAPIKeyWriteError 包装密钥写操作（新建、修改、删除、查看完整密钥）的非 2xx 响应。
+// 有的 NewAPI 站点限制了谁能改动密钥，写的时候返回 403，这两种在原报错后面补一句怎么处理：
+//   - "Browser session login is required"（上游原版的说法是 "a dashboard login session is required"）：
+//     系统访问令牌只能读，要网页登录的会话；
+//   - "browser origin required"：只接受从站点自己网页上发起的改动，程序这边没有办法。
+func newAPIKeyWriteError(prefix string, resp *resty.Response) error {
+	err := fmt.Errorf("%s: %w", prefix, connector.HTTPStatusError(resp.StatusCode(), resp.Body()))
+	if resp.StatusCode() != http.StatusForbidden {
+		return err
+	}
+	text := strings.ToLower(string(resp.Body()))
+	if !strings.Contains(text, "required") {
+		return err
+	}
+	switch {
+	case strings.Contains(text, "origin"):
+		return fmt.Errorf("%w（%s）", err, newAPIOriginHint)
+	case strings.Contains(text, "session"):
+		return fmt.Errorf("%w（%s）", err, newAPISessionHint)
+	}
+	return err
 }
 
 func decodeNewAPIWrite(body []byte, prefix string) error {

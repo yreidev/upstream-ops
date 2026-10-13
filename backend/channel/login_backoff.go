@@ -91,15 +91,64 @@ type loginBackoffState struct {
 	lastErr   string
 }
 
-// loginBackoffs 按渠道记录登录退避状态。只放内存：重启后清空，最多多试一次。
+// loginBackoffs 按渠道记录登录退避状态。内存里放一份，设了 store 时同步写库，重启后读回，
+// 暂停自动登录的渠道不会因为重启再白登录一次。写库失败不影响内存里的状态，最多重启后多试一次。
 type loginBackoffs struct {
 	mu     sync.Mutex
 	states map[uint]*loginBackoffState
+	store  *storage.LoginBackoffs
+	loaded bool
+}
+
+// useStore 设置持久化存储，下次访问时从库里读回状态。
+func (b *loginBackoffs) useStore(store *storage.LoginBackoffs) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.store = store
+	b.loaded = false
+}
+
+// loadLocked 第一次访问时把库里的状态读进内存；读失败下次再试。调用方持有 b.mu。
+func (b *loginBackoffs) loadLocked() {
+	if b.states == nil {
+		b.states = make(map[uint]*loginBackoffState)
+	}
+	if b.loaded || b.store == nil {
+		return
+	}
+	rows, err := b.store.List()
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		if _, ok := b.states[row.ChannelID]; ok {
+			continue
+		}
+		b.states[row.ChannelID] = &loginBackoffState{
+			failures:  row.Failures,
+			failedAt:  row.FailedAt,
+			nextAt:    row.NextAt,
+			paused:    row.Paused,
+			captchaID: row.CaptchaID,
+			lastErr:   row.LastError,
+		}
+	}
+	b.loaded = true
+}
+
+func (b *loginBackoffs) deleteLocked(channelIDs ...uint) {
+	for _, id := range channelIDs {
+		delete(b.states, id)
+	}
+	if b.store != nil {
+		_ = b.store.Delete(channelIDs...)
+	}
 }
 
 func (b *loginBackoffs) get(channelID uint) (loginBackoffState, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.loadLocked()
 	st, ok := b.states[channelID]
 	if !ok {
 		return loginBackoffState{}, false
@@ -111,9 +160,7 @@ func (b *loginBackoffs) get(channelID uint) (loginBackoffState, bool) {
 func (b *loginBackoffs) recordFailure(c *storage.Channel, err error, now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.states == nil {
-		b.states = make(map[uint]*loginBackoffState)
-	}
+	b.loadLocked()
 	st, ok := b.states[c.ID]
 	if !ok {
 		st = &loginBackoffState{}
@@ -129,23 +176,43 @@ func (b *loginBackoffs) recordFailure(c *storage.Channel, err error, now time.Ti
 		st.captchaID = *c.CaptchaConfigID
 	}
 	st.lastErr = err.Error()
+	if b.store != nil {
+		_ = b.store.Save(&storage.LoginBackoffState{
+			ChannelID: c.ID,
+			Failures:  st.failures,
+			FailedAt:  st.failedAt,
+			NextAt:    st.nextAt,
+			Paused:    st.paused,
+			CaptchaID: st.captchaID,
+			LastError: st.lastErr,
+		})
+	}
 	return st.paused
 }
 
 func (b *loginBackoffs) clear(channelID uint) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	delete(b.states, channelID)
+	b.loadLocked()
+	// 没读成库时也删一次库里的行，免得留下过期的暂停状态，重启后误读回来
+	if _, ok := b.states[channelID]; ok || !b.loaded {
+		b.deleteLocked(channelID)
+	}
 }
 
 // clearIf 删除满足条件的状态。
 func (b *loginBackoffs) clearIf(match func(*loginBackoffState) bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.loadLocked()
+	var ids []uint
 	for id, st := range b.states {
 		if match(st) {
-			delete(b.states, id)
+			ids = append(ids, id)
 		}
+	}
+	if len(ids) > 0 {
+		b.deleteLocked(ids...)
 	}
 }
 
@@ -178,6 +245,11 @@ func (s *Service) captchaRecovered(captchaID uint, since time.Time) bool {
 		return false
 	}
 	return cfg.BalanceAt != nil && cfg.BalanceAt.After(since) && cfg.LastBalance != nil && *cfg.LastBalance > 0
+}
+
+// PersistLoginBackoffs 让登录退避和暂停状态写进数据库，重启后接着生效。不调用时只放内存。
+func (s *Service) PersistLoginBackoffs(store *storage.LoginBackoffs) {
+	s.loginBackoffs.useStore(store)
 }
 
 // ResumeAutoLogin 解除渠道的登录退避和暂停，渠道配置被修改时调用。

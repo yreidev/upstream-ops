@@ -46,7 +46,9 @@ export default function MonitorLogsPage() {
       title: "渠道",
       dataIndex: "channel_id",
       width: 200,
-      render: (id: number) => {
+      render: (id: number, row: MonitorLog) => {
+        // CCH 同步不属于某个渠道，channel_id 为 0
+        if (id === 0 && row.job === "cch_sync") return "CCH"
         const ch = channelMap.get(id)
         return ch ? `${ch.name} · ${channelTypeLabel(ch.type)}` : `渠道 #${id}`
       },
@@ -82,7 +84,7 @@ export default function MonitorLogsPage() {
     <div className="page">
       <PageHeader
         title="监控日志"
-        description="每次登录、校验会话、采集余额、消费和倍率都会记一条，按设置里的保留天数自动清理。"
+        description="每次登录、校验会话、采集余额、消费和倍率，以及同步成本倍率到 CCH，都会记一条，按设置里的保留天数自动清理。"
         actions={
           <>
             <ChannelSelect value={channelID} onChange={setChannelID} />

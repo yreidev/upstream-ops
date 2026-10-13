@@ -60,6 +60,7 @@ const notificationEventOptions: Array<{ id: string; label: string; events: Notif
   { id: "captcha_failed", label: "验证码失败", events: ["captcha_failed"] },
   { id: "monitor_failed", label: "采集失败", events: ["monitor_failed"] },
   { id: "recovered", label: "故障恢复", events: ["recovered"] },
+  { id: "cch_sync", label: "CCH 倍率同步", events: ["cch_sync"] },
 ]
 
 const allNotificationEvents = Array.from(new Set(notificationEventOptions.flatMap((option) => option.events)))

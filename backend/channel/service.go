@@ -79,6 +79,11 @@ func (s *Service) upstreamConfig() config.UpstreamConfig {
 	return cfg.WithDefaults()
 }
 
+// UpstreamConfig 返回当前的上游请求配置（超时、User-Agent），设置页应用后跟着变。
+func (s *Service) UpstreamConfig() config.UpstreamConfig {
+	return s.upstreamConfig()
+}
+
 func applyHTTPConfig(conn any, cfg config.UpstreamConfig) {
 	if setter, ok := conn.(connector.HTTPConfigSetter); ok {
 		cfg = cfg.WithDefaults()
@@ -1135,6 +1140,20 @@ func (s *Service) ListAPIKeys(ctx context.Context, channelID uint, query connect
 	}
 	_ = s.Channels.SetLastError(c.ID, "")
 	return page, nil
+}
+
+// ListAllAPIKeys 分页拉取渠道的全部密钥（带所属分组和分组倍率），页数上限见 maxAPIKeyListPages。
+func (s *Service) ListAllAPIKeys(ctx context.Context, channelID uint) ([]connector.APIKey, error) {
+	c, resolved, conn, session, err := s.prepareConnectorCall(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := listAllAPIKeys(ctx, conn, resolved, session)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.Channels.SetLastError(c.ID, "")
+	return keys, nil
 }
 
 func (s *Service) ListAPIKeyGroups(ctx context.Context, channelID uint) ([]connector.APIKeyGroup, error) {

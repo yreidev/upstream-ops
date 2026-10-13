@@ -14,7 +14,7 @@ export type NotificationChannelType = "telegram" | "wecom"
 export type CaptchaProviderType = "yescaptcha"
 
 /** 监控日志的任务类型（backend/storage/model.go MonitorJob*） */
-export type MonitorJob = "login" | "session" | "balance" | "costs" | "rates"
+export type MonitorJob = "login" | "session" | "balance" | "costs" | "rates" | "cch_sync"
 
 export type NotificationEvent =
   | "balance_low"
@@ -27,6 +27,7 @@ export type NotificationEvent =
   | "captcha_failed"
   | "monitor_failed"
   | "recovered"
+  | "cch_sync"
 
 export interface Channel {
   id: number
@@ -275,6 +276,8 @@ export interface SystemConfig {
 export interface SystemConfigResponse {
   config_path: string
   config: SystemConfig
+  /** 由环境变量决定的配置项：路径（如 auth.enabled）→ 环境变量名 */
+  env_overrides?: Record<string, string>
 }
 
 export interface AppVersion {
@@ -295,6 +298,47 @@ export interface AppReleaseNote {
   url: string
   published_at: string
   notes: string
+}
+
+/** CCH 成本倍率同步配置（backend/cch/sync.go SettingsView），令牌只返回有没有填。 */
+export interface CCHSyncSettings {
+  enabled: boolean
+  base_url: string
+  token_set: boolean
+  last_run_at?: string
+  last_summary?: string
+  last_error?: string
+}
+
+/** 一个 CCH 供应商的配对和同步结果（backend/cch/sync.go Status）。 */
+export type CCHSyncStatus = "in_sync" | "pending" | "updated" | "failed" | "skipped"
+
+export interface CCHSyncItem {
+  provider_id: number
+  provider_name: string
+  provider_enabled: boolean
+  provider_host: string
+  key_tail?: string
+  current: number
+  channel_id?: number
+  channel_name?: string
+  key_name?: string
+  group_name?: string
+  target?: number
+  status: CCHSyncStatus
+  reason?: string
+}
+
+/** 一轮配对 / 同步的结果；applied 为 false 表示只是预览。 */
+export interface CCHSyncResult {
+  applied: boolean
+  finished_at: string
+  items: CCHSyncItem[]
+  in_sync: number
+  pending: number
+  updated: number
+  failed: number
+  skipped: number
 }
 
 export interface ApplyConfigResult {

@@ -74,3 +74,27 @@ func TestApplyFromFileUpdatesUpstreamConfig(t *testing.T) {
 		t.Fatalf("user agent = %q", conn.cfg.UserAgent)
 	}
 }
+
+func TestApplyFromFileKeepsEnvOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	// 配置文件里登录是关的，只靠环境变量开着；应用后必须仍然开着
+	if err := config.Save(path, &config.Config{Auth: config.AuthConfig{Enabled: false}}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	t.Setenv("AUTH_ENABLED", "true")
+	t.Setenv("ADMIN_USERNAME", "admin")
+	t.Setenv("ADMIN_PASSWORD", "env-pass")
+	t.Setenv("AUTH_TOKEN_SECRET", "env-secret")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := New(path, "", log, nil, nil, nil, nil, config.UpstreamConfig{},
+		func(config.SchedulerConfig) *scheduler.Scheduler {
+			return scheduler.New(config.SchedulerConfig{}, nil, nil, nil, nil, nil, nil, nil, log)
+		})
+	if _, err := mgr.ApplyFromFile(); err != nil {
+		t.Fatalf("ApplyFromFile: %v", err)
+	}
+	if mgr.CurrentAuth() == nil {
+		t.Fatal("login was turned off by applying a config file that predates AUTH_ENABLED")
+	}
+}

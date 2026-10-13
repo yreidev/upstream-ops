@@ -16,7 +16,7 @@ import {
 } from "@douyinfe/semi-ui"
 import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
 import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
-import { IconCopy, IconDelete, IconEdit, IconPlus, IconPriceTag, IconRefresh, IconSearch } from "@douyinfe/semi-icons"
+import { IconCopy, IconDelete, IconEdit, IconExternalOpen, IconPlus, IconPriceTag, IconRefresh, IconSearch } from "@douyinfe/semi-icons"
 import { apiFetch } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 import { confirm } from "@/lib/confirm"
@@ -125,6 +125,14 @@ function formFromKey(key: ChannelAPIKey, channel: Channel): KeyForm {
   return base
 }
 
+/**
+ * 上游站点自己的密钥管理页。Sub2API 和 NewAPI 现在的网页界面都是 /keys；
+ * NewAPI 旧界面是 /console/token，官方新界面会把它跳到 /keys，但魔改版不一定有这个跳转，所以直接用 /keys。
+ */
+function siteKeysURL(channel: Channel) {
+  return `${channel.site_url.replace(/\/+$/, "")}/keys`
+}
+
 function groupDisplayName(key: ChannelAPIKey) {
   return key.group_name || key.group || (key.group_id != null ? `#${key.group_id}` : "—")
 }
@@ -148,11 +156,20 @@ function sourceGroupLabel(key: ChannelAPIKey, channel: Channel, groups: ChannelA
 
 const RENAME_ISSUE_LIMIT = 8
 
-// 一键改名后在提示里列出跳过或失败的密钥，太多时只列前几个。
+// 一键改名后在提示里列出跳过或失败的密钥：原因相同的合成一行，太多时只列前几个。
 function renameIssueText(issues: ChannelAPIKeyRenameIssue[]) {
-  const shown = issues.slice(0, RENAME_ISSUE_LIMIT)
-  const lines = shown.map((item) => `${item.name || item.id}：${item.reason}`)
-  if (issues.length > shown.length) lines.push(`…等 ${issues.length} 个`)
+  const byReason = new Map<string, string[]>()
+  for (const item of issues) {
+    const names = byReason.get(item.reason) ?? []
+    names.push(item.name || String(item.id))
+    byReason.set(item.reason, names)
+  }
+  const lines = [...byReason].slice(0, RENAME_ISSUE_LIMIT).map(([reason, names]) => {
+    const shown = names.slice(0, RENAME_ISSUE_LIMIT).join("、")
+    const more = names.length > RENAME_ISSUE_LIMIT ? ` 等 ${names.length} 个` : ""
+    return `${shown}${more}：${reason}`
+  })
+  if (byReason.size > RENAME_ISSUE_LIMIT) lines.push(`…还有 ${byReason.size - RENAME_ISSUE_LIMIT} 种原因`)
   return lines.join("\n")
 }
 
@@ -562,25 +579,23 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
       const parts = [`已改名 ${res.renamed} 个`]
       if (res.unchanged > 0) parts.push(`${res.unchanged} 个本来就同名`)
       if (res.skipped.length > 0) parts.push(`跳过 ${res.skipped.length} 个`)
-      Toast.success({
-        content: (
-          <div className="stack" style={{ gap: 4 }}>
-            <span>{parts.join("，")}</span>
-            {res.skipped.length > 0 ? <span className="pre-wrap" style={{ fontSize: 12 }}>{renameIssueText(res.skipped)}</span> : null}
-          </div>
-        ),
-        duration: res.skipped.length > 0 ? 8 : 3,
-      })
+      if (res.failed.length > 0) parts.push(`${res.failed.length} 个修改失败`)
+      // 有失败时只弹一条错误提示，不再同时弹“已改名 0 个”的成功提示
+      const content = (
+        <div className="stack" style={{ gap: 4 }}>
+          <span>{parts.join("，")}</span>
+          {res.failed.length > 0 ? (
+            <span className="pre-wrap" style={{ fontSize: 12 }}>{`修改失败：\n${renameIssueText(res.failed)}`}</span>
+          ) : null}
+          {res.skipped.length > 0 ? (
+            <span className="pre-wrap" style={{ fontSize: 12 }}>{`跳过：\n${renameIssueText(res.skipped)}`}</span>
+          ) : null}
+        </div>
+      )
       if (res.failed.length > 0) {
-        Toast.error({
-          content: (
-            <div className="stack" style={{ gap: 4 }}>
-              <span>{res.failed.length} 个密钥修改失败</span>
-              <span className="pre-wrap" style={{ fontSize: 12 }}>{renameIssueText(res.failed)}</span>
-            </div>
-          ),
-          duration: 8,
-        })
+        Toast.error({ content, duration: 8 })
+      } else {
+        Toast.success({ content, duration: res.skipped.length > 0 ? 8 : 3 })
       }
       reload()
     } catch (e) {
@@ -659,10 +674,12 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
       key: "group",
       render: (_: unknown, item: ChannelAPIKey) => {
         const isCurrentTarget = !!(isMigrate && channel && targetGroup && keyMatchesGroup(item, channel, targetGroup))
+        // 分组名可以复制：有的站点只允许在网页上改密钥，复制过去当密钥名称用
+        const groupName = (item.group_name || item.group || "").trim()
         return (
           <div className="stack" style={{ gap: 2 }}>
             <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-              <Typography.Text size="small" strong>
+              <Typography.Text size="small" strong copyable={!isMigrate && groupName ? { content: groupName, copyTip: "复制分组名" } : false}>
                 {isMigrate && channel ? sourceGroupLabel(item, channel, groups) : groupDisplayName(item)}
               </Typography.Text>
               {isCurrentTarget ? <Tag size="small">已在目标分组</Tag> : null}
@@ -847,7 +864,12 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
                   <Tag color="blue">{liveTargetGroup?.name || targetGroupName}</Tag>
                 </div>
               ) : (
-                <div className="row">
+                <div className="row" style={{ flexWrap: "wrap" }}>
+                  <Tooltip content="在新标签页打开上游站点的密钥管理页">
+                    <Button icon={<IconExternalOpen />} disabled={!channel} onClick={() => channel && window.open(siteKeysURL(channel), "_blank", "noopener,noreferrer")}>
+                      打开站点密钥页
+                    </Button>
+                  </Tooltip>
                   <Tooltip content="把这个渠道全部密钥的名称改成各自所属的分组名">
                     <Button icon={<IconPriceTag />} loading={renaming} disabled={loading || items.length === 0} onClick={() => void renameKeysToGroup()}>
                       名称改为分组名

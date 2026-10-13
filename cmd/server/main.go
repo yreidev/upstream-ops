@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/api"
 	"github.com/yreidev/upstream-ops/backend/auth"
+	"github.com/yreidev/upstream-ops/backend/cch"
 	"github.com/yreidev/upstream-ops/backend/channel"
 	"github.com/yreidev/upstream-ops/backend/config"
 	"github.com/yreidev/upstream-ops/backend/crypto"
@@ -101,6 +102,7 @@ func main() {
 	monLogs := storage.NewMonitorLogs(db)
 
 	channelSvc := channel.NewService(channels, authSessions, captchas, rates, monLogs, cipher)
+	channelSvc.PersistLoginBackoffs(storage.NewLoginBackoffs(db))
 	channelSvc.UpdateUpstreamConfig(cfg.Upstream)
 	dispatcher := notify.NewDispatcher(notifies, cipher, log, notify.Policy{
 		NotificationPrefix: cfg.App.NotificationPrefix,
@@ -109,9 +111,11 @@ func main() {
 		SendMaxAttempts:    cfg.Notifications.SendMaxAttempts,
 	})
 	monitorSvc := monitor.NewService(channels, announcements, rates, monLogs, channelSvc, dispatcher, log)
+	cchSyncSvc := cch.NewService(storage.NewCCHSync(db), channels, channelSvc, monLogs, dispatcher, cipher, log, channelSvc.UpstreamConfig)
 
 	schedulerFactory := func(scfg config.SchedulerConfig) *scheduler.Scheduler {
-		return scheduler.New(scfg, monitorSvc, monLogs, rates, notifies, announcements, captchas, cipher, log)
+		return scheduler.New(scfg, monitorSvc, monLogs, rates, notifies, announcements, captchas, cipher, log).
+			OnRatesScanned(cchSyncSvc.RunScheduled)
 	}
 	sch := schedulerFactory(cfg.Scheduler)
 	if err := sch.Start(); err != nil {
@@ -162,6 +166,7 @@ func main() {
 		MonLogs:       monLogs,
 		ChannelSvc:    channelSvc,
 		Monitor:       monitorSvc,
+		CCHSync:       cchSyncSvc,
 		Dispatcher:    dispatcher,
 		Log:           log,
 		Frontend:      frontendFS,

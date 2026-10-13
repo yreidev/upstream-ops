@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -73,5 +74,19 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 	}
 	if total != 0 || len(list) != 0 {
 		t.Fatalf("announcements not cleaned: total=%d list=%#v", total, list)
+	}
+}
+
+func TestRunRatesCallsHookAfterScan(t *testing.T) {
+	calls := 0
+	hasDeadline := false
+	s := New(config.SchedulerConfig{}, nil, nil, nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		OnRatesScanned(func(ctx context.Context) {
+			calls++
+			_, hasDeadline = ctx.Deadline()
+		})
+	s.runRates()
+	if calls != 1 || !hasDeadline {
+		t.Fatalf("hook calls = %d, has deadline = %v", calls, hasDeadline)
 	}
 }

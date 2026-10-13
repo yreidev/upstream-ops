@@ -1,14 +1,33 @@
 import { useMemo } from "react"
-import { CommonChart } from "@visactor/react-vchart"
-import { registerDiscreteLegend } from "@visactor/vchart"
+import { VChartSimple } from "@visactor/react-vchart"
+import { VChart } from "@visactor/vchart/esm/core"
+import { registerCommonChart } from "@visactor/vchart/esm/chart/common"
+import { registerLineSeries } from "@visactor/vchart/esm/series/line/line"
+import { registerCartesianBandAxis, registerCartesianLinearAxis } from "@visactor/vchart/esm/component/axis/cartesian"
+import { registerCartesianCrossHair } from "@visactor/vchart/esm/component/crosshair"
+import { registerDiscreteLegend } from "@visactor/vchart/esm/component/legend"
+import { registerTooltip } from "@visactor/vchart/esm/component/tooltip"
+import { registerDomTooltipHandler } from "@visactor/vchart/esm/plugin/components/tooltip-handler"
+import { registerAnimate } from "@visactor/vchart/esm/plugin/other"
 import { initVChartSemiTheme } from "@visactor/vchart-semi-theme"
 import { money } from "@/lib/format"
 import { useResolvedTheme } from "@/lib/theme"
 
+// 按需注册：@visactor/vchart 主入口会连带注册全部图表类型（vchart-all），react-vchart 的 CommonChart 也从主入口引入，
+// 图表这块产物因此有 1.3 MB。这里只注册双轴折线图用到的部分，配 VChartSimple 使用。
+VChart.useRegisters([
+  registerCommonChart,
+  registerLineSeries,
+  registerCartesianBandAxis,
+  registerCartesianLinearAxis,
+  registerCartesianCrossHair,
+  registerDiscreteLegend,
+  registerTooltip,
+  registerDomTooltipHandler,
+  registerAnimate,
+])
 // 图表配色跟随 Semi 主题，并监听 body 的 theme-mode 切换亮色、暗色。放在本模块里，只有用到图表的页面才加载 VChart。
 initVChartSemiTheme({ isWatchingMode: true })
-// CommonChart 按需注册的组件里没有图例。
-registerDiscreteLegend()
 
 export interface BalanceCostPoint {
   /** 横轴文字，如 10月13日 */
@@ -45,6 +64,7 @@ export default function BalanceCostChart({ data, height = 280, compact = false }
     const cost = data.filter((d) => d.cost != null).map((d) => ({ day: d.day, value: d.cost, type: "消费" }))
     const line = { style: { lineWidth: 2, curveType: "monotone" } }
     return {
+      type: "common",
       height,
       padding: compact ? [8, 4, 4, 0] : [12, 12, 8, 8],
       data: [
@@ -77,6 +97,5 @@ export default function BalanceCostChart({ data, height = 280, compact = false }
     // theme 变了要重新读 CSS 变量
   }, [data, height, compact, theme])
 
-  // CommonChart 不收 spec，配置项直接作为属性传入。
-  return <CommonChart key={theme} {...(spec as any)} />
+  return <VChartSimple key={theme} vchartConstructor={VChart} spec={spec as any} />
 }

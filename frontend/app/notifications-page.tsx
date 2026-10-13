@@ -3,6 +3,7 @@ import { Button, Card, Table, Tag, Toast, Tooltip, Typography } from "@douyinfe/
 import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
 import { IconDelete, IconEdit, IconPlus, IconSend } from "@douyinfe/semi-icons"
 import { PageHeader } from "@/components/layout/page-header"
+import { NotificationBody } from "@/components/monitor/notification-body"
 import { NotificationFormModal } from "@/components/monitor/notification-form-modal"
 import { apiFetch } from "@/lib/api"
 import type { NotificationChannel, NotificationLog } from "@/lib/api-types"
@@ -230,20 +231,7 @@ function NotificationLogsCard() {
         loading={logs.loading && !logs.data}
         scroll={{ x: 760 }}
         empty="还没有发送记录"
-        expandedRowRender={(l?: NotificationLog) =>
-          l ? (
-            <div className="stack" style={{ gap: 8 }}>
-              <Typography.Paragraph className="pre-wrap" style={{ margin: 0 }}>
-                {l.body || "—"}
-              </Typography.Paragraph>
-              {!l.success && l.error_message ? (
-                <Typography.Paragraph type="danger" className="pre-wrap" style={{ margin: 0 }}>
-                  {l.error_message}
-                </Typography.Paragraph>
-              ) : null}
-            </div>
-          ) : null
-        }
+        expandedRowRender={(l?: NotificationLog) => (l ? <NotificationBody log={l} /> : null)}
         pagination={{
           currentPage: page,
           pageSize: PAGE_SIZE,

@@ -62,6 +62,7 @@ type Deps struct {
 	MonLogs       *storage.MonitorLogs
 	ChannelSvc    channelService
 	Monitor       monitorService
+	CCHSync       cchSyncService
 	Dispatcher    *notify.Dispatcher
 	Log           *slog.Logger
 
@@ -99,6 +100,9 @@ func Register(r *gin.Engine, d *Deps) {
 		registerMonitorLogs(api, d)
 		registerDashboard(api, d)
 		registerSettings(api, d)
+		if d.CCHSync != nil {
+			registerCCHSync(api, d)
+		}
 	}
 
 	if d.Frontend != nil {

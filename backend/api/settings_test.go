@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -59,5 +60,66 @@ func TestSaveSettingsKeepsAppVersion(t *testing.T) {
 	}
 	if got.Upstream.TimeoutSeconds != 45 || got.Upstream.UserAgent != "custom-agent" {
 		t.Fatalf("upstream = %#v", got.Upstream)
+	}
+}
+
+func TestSettingsRespectEnvOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.Save(path, &config.Config{Auth: config.AuthConfig{Enabled: false, Username: "admin", Password: "file-pass"}}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	t.Setenv("AUTH_ENABLED", "true")
+	t.Setenv("ADMIN_PASSWORD", "env-pass")
+
+	r := gin.New()
+	registerSettings(r.Group("/api"), &Deps{
+		Runtime: runtimeconfig.New(path, "", nil, nil, nil, nil, nil, config.UpstreamConfig{}, nil),
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/settings/config", nil))
+	var got struct {
+		Data struct {
+			Config       settingsConfigView `json:"config"`
+			EnvOverrides map[string]string  `json:"env_overrides"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if !got.Data.Config.Auth.Enabled {
+		t.Fatal("page must show the effective value from AUTH_ENABLED")
+	}
+	if got.Data.Config.Auth.Password != "" {
+		t.Fatalf("password from env must not be echoed, got %q", got.Data.Config.Auth.Password)
+	}
+	if got.Data.EnvOverrides["auth.enabled"] != "AUTH_ENABLED" || got.Data.EnvOverrides["auth.password"] != "ADMIN_PASSWORD" {
+		t.Fatalf("env_overrides = %v", got.Data.EnvOverrides)
+	}
+
+	body := `{
+		"app":{"title":"New","notificationPrefix":""},
+		"auth":{"enabled":true,"username":"admin","password":"","tokenSecret":"","sessionTTLHours":168},
+		"scheduler":{"balanceCron":"","rateCron":"","concurrency":4,"retention":{"cron":""}},
+		"notifications":{"minChangePct":0,"balanceLowCooldownMinutes":60,"sendMaxAttempts":3},
+		"upstream":{}
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	file, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if file.App.Title != "New" {
+		t.Fatalf("title = %q", file.App.Title)
+	}
+	if file.Auth.Enabled || file.Auth.Password != "file-pass" {
+		t.Fatalf("env-controlled items must keep the file values, got enabled=%v password=%q", file.Auth.Enabled, file.Auth.Password)
 	}
 }

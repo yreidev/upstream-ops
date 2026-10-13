@@ -20,6 +20,7 @@ var dataMigrations = []struct {
 }{
 	{name: "20261013_notification_subscriptions", run: migrateNotificationSubscriptions},
 	{name: "20261013_redact_notification_log_secrets", run: redactNotificationLogSecrets},
+	{name: "20261013_subscription_cch_sync_event", run: addCCHSyncSubscriptionEvent},
 }
 
 func runDataMigrations(db *gorm.DB) error {
@@ -154,6 +155,53 @@ func upgradeSubscription(sub map[string]json.RawMessage, existingUpstreams []uin
 		}
 	}
 	return changed
+}
+
+// addCCHSyncSubscriptionEvent 给"只勾了部分事件"的订阅规则补上新增的 CCH 同步事件，
+// 让已有的通知渠道默认也能收到同步结果；事件列表为空（全部事件）的规则本来就能收到，不用改。
+func addCCHSyncSubscriptionEvent(db *gorm.DB) error {
+	var notifyChannels []NotificationChannel
+	if err := db.Find(&notifyChannels).Error; err != nil {
+		return err
+	}
+	for _, nc := range notifyChannels {
+		raw := strings.TrimSpace(nc.Subscriptions)
+		if raw == "" || raw == "null" || raw == "[]" {
+			continue
+		}
+		var subs []map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &subs); err != nil {
+			continue
+		}
+		changed := false
+		for _, sub := range subs {
+			var events []NotificationEvent
+			if err := json.Unmarshal(sub["events"], &events); err != nil || len(events) == 0 {
+				continue
+			}
+			if slices.Contains(events, EventCCHSync) {
+				continue
+			}
+			encoded, err := json.Marshal(append(events, EventCCHSync))
+			if err != nil {
+				return err
+			}
+			sub["events"] = encoded
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		out, err := json.Marshal(subs)
+		if err != nil {
+			return err
+		}
+		if err := db.Model(&NotificationChannel{}).Where("id = ?", nc.ID).
+			UpdateColumn("subscriptions", string(out)).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // redactNotificationLogSecrets 抹掉旧版本写进通知发送记录的密钥：

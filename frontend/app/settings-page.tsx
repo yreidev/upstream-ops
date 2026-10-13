@@ -1,14 +1,15 @@
-import { lazy, Suspense, useRef, useState, type ReactNode } from "react"
-import { Banner, Button, Card, Form, Spin, Tag, Toast, Typography } from "@douyinfe/semi-ui"
+import { lazy, Suspense, useRef, useState } from "react"
+import { Banner, Button, Form, Spin, Tag, Toast, Typography } from "@douyinfe/semi-ui"
 import type { FormApi } from "@douyinfe/semi-ui/lib/es/form"
 import { IconRefresh } from "@douyinfe/semi-icons"
 import { PageHeader } from "@/components/layout/page-header"
+import { CCHSyncSection } from "@/components/settings/cch-sync-section"
+import { SettingsSection } from "@/components/settings/settings-section"
 import { apiFetch } from "@/lib/api"
 import type { ApplyConfigResult, SystemConfig } from "@/lib/api-types"
 import { useSystemConfig } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
 import { useVersionCheck } from "@/hooks/use-version-check"
-import { useIsMobile } from "@/hooks/use-mobile"
 
 const UpdateNotesModal = lazy(() => import("@/components/monitor/update-notes-modal"))
 
@@ -68,32 +69,6 @@ function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfi
   }
 }
 
-function Section({ title, description, extra, children }: {
-  title: string
-  description: string
-  extra?: ReactNode
-  children: ReactNode
-}) {
-  const isMobile = useIsMobile()
-  // 手机上右侧放不下，附加内容挪到说明下面，不然标题会被挤成一字一行
-  return (
-    <Card
-      title={
-        <div className="stack" style={{ gap: 2 }}>
-          <Typography.Text strong>{title}</Typography.Text>
-          <Typography.Text type="tertiary" size="small">
-            {description}
-          </Typography.Text>
-          {isMobile && extra ? <div style={{ marginTop: 6 }}>{extra}</div> : null}
-        </div>
-      }
-      headerExtraContent={isMobile ? undefined : extra}
-    >
-      <div className="form-grid">{children}</div>
-    </Card>
-  )
-}
-
 export default function SettingsPage() {
   const query = useSystemConfig()
   const refresh = useTriggerRefresh()
@@ -144,7 +119,7 @@ export default function SettingsPage() {
   const header = (
     <PageHeader
       title="设置"
-      description="保存只写入配置文件，点“应用”后鉴权、调度、通知策略和上游请求立即生效。通知渠道、打码平台在各自页面管理，改动实时生效。"
+      description="保存只写入配置文件，点“应用”后鉴权、调度、通知策略和上游请求立即生效。CCH 成本倍率同步在页面下方单独保存；通知渠道、打码平台在各自页面管理，改动实时生效。"
     />
   )
 
@@ -163,6 +138,13 @@ export default function SettingsPage() {
     )
   }
 
+  // 被环境变量管着的项：启动和“应用”都以环境变量为准，页面上改了也没用，所以锁住并注明
+  const envOverrides = query.data?.env_overrides ?? {}
+  const lock = (field: string) =>
+    envOverrides[field]
+      ? { disabled: true, extraText: `由环境变量 ${envOverrides[field]} 决定，要改请改环境变量后重启。` }
+      : {}
+
   const v = versionCheck.version
   const statusText = dirty
     ? "有未保存的修改"
@@ -173,89 +155,94 @@ export default function SettingsPage() {
   return (
     <div className="page">
       {header}
-      <Form
-        labelPosition="top"
-        initValues={initial}
-        allowEmpty
-        getFormApi={(api) => (formApi.current = api)}
-        onValueChange={() => setDirty(true)}
-        className="stack"
-        style={{ gap: 16 }}
-      >
-        <Section
-          title="应用信息"
-          description="页面标题和通知标题前缀。"
-          extra={
-            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-              {v?.version ? <Tag>当前 v{v.version}</Tag> : null}
-              {v?.latest_version ? (
-                v.update_available ? (
-                  <Tag color="orange" style={{ cursor: "pointer" }} onClick={versionCheck.openNotes}>
-                    可更新到 {v.latest_version} · 查看更新日志
-                  </Tag>
-                ) : (
-                  <Tag color="green">已是最新</Tag>
-                )
-              ) : null}
-              <Button size="small" icon={<IconRefresh />} loading={versionCheck.checking} onClick={versionCheck.check}>
-                检测更新
-              </Button>
-            </div>
-          }
+      {/* 浮动栏只跟着上面这几块走，滚到下面单独保存的 CCH 同步时就停在这里，免得看成同一个保存 */}
+      <div className="stack" style={{ gap: 16 }}>
+        <Form
+          labelPosition="top"
+          initValues={initial}
+          allowEmpty
+          getFormApi={(api) => (formApi.current = api)}
+          onValueChange={() => setDirty(true)}
+          className="stack"
+          style={{ gap: 16 }}
         >
-          <Form.Input field="app.title" label="应用标题" extraText="显示在侧边栏和浏览器标签上。" />
-          <Form.Input field="app.notificationPrefix" label="通知前缀" extraText="加在通知标题前面，留空不加。" />
-        </Section>
+          <SettingsSection
+            title="应用信息"
+            description="页面标题和通知标题前缀。"
+            extra={
+              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                {v?.version ? <Tag>当前 v{v.version}</Tag> : null}
+                {v?.latest_version ? (
+                  v.update_available ? (
+                    <Tag color="orange" style={{ cursor: "pointer" }} onClick={versionCheck.openNotes}>
+                      可更新到 {v.latest_version} · 查看更新日志
+                    </Tag>
+                  ) : (
+                    <Tag color="green">已是最新</Tag>
+                  )
+                ) : null}
+                <Button size="small" icon={<IconRefresh />} loading={versionCheck.checking} onClick={versionCheck.check}>
+                  检测更新
+                </Button>
+              </div>
+            }
+          >
+            <Form.Input field="app.title" label="应用标题" extraText="显示在侧边栏和浏览器标签上。" {...lock("app.title")} />
+            <Form.Input field="app.notificationPrefix" label="通知前缀" extraText="加在通知标题前面，留空不加。" {...lock("app.notificationPrefix")} />
+          </SettingsSection>
 
-        <Section title="登录鉴权" description="后台是否需要登录，以及登录令牌怎么签发。应用后立即生效。">
-          <Form.Switch field="auth.enabled" label="启用登录" extraText="关闭后打开页面直接进入后台，不显示登录页。" />
-          <Form.Input field="auth.username" label="管理员账号" />
-          <Form.Input field="auth.password" label="管理员密码" mode="password" extraText="应用后用于新的登录。" />
-          <Form.Input field="auth.tokenSecret" label="令牌签名密钥" mode="password" extraText="留空时使用安全主密钥。" />
-          <Form.InputNumber field="auth.sessionTTLHours" label="登录有效期（小时）" min={0} style={{ width: "100%" }} />
-        </Section>
+          <SettingsSection title="登录鉴权" description="后台是否需要登录，以及登录令牌怎么签发。应用后立即生效。">
+            <Form.Switch field="auth.enabled" label="启用登录" extraText="关闭后打开页面直接进入后台，不显示登录页。" {...lock("auth.enabled")} />
+            <Form.Input field="auth.username" label="管理员账号" {...lock("auth.username")} />
+            <Form.Input field="auth.password" label="管理员密码" mode="password" extraText="应用后用于新的登录。" {...lock("auth.password")} />
+            <Form.Input field="auth.tokenSecret" label="令牌签名密钥" mode="password" extraText="留空时使用安全主密钥。" {...lock("auth.tokenSecret")} />
+            <Form.InputNumber field="auth.sessionTTLHours" label="登录有效期（小时）" min={0} style={{ width: "100%" }} {...lock("auth.sessionTTLHours")} />
+          </SettingsSection>
 
-        <Section title="调度与保留策略" description="余额采集、倍率采集和历史数据清理的周期。Cron 带秒，共 6 段。">
-          <Form.Input field="scheduler.balanceCron" label="余额采集 Cron" extraText="余额与消费的同步周期。" className="mono" />
-          <Form.Input field="scheduler.rateCron" label="倍率采集 Cron" extraText="分组倍率的扫描周期。" className="mono" />
-          <Form.InputNumber field="scheduler.concurrency" label="并发数" extraText="每轮最多同时处理的渠道数。" min={1} style={{ width: "100%" }} />
-          <Form.Input field="scheduler.retention.cron" label="清理任务 Cron" extraText="留空则不清理历史数据。" className="mono" />
-          <Form.InputNumber field="scheduler.retention.monitorLogsDays" label="监控日志保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
-          <Form.InputNumber field="scheduler.retention.balanceSnapshotsDays" label="余额快照保留天数" extraText="余额与消费趋势图用这些数据。0 表示不清理。" min={0} style={{ width: "100%" }} />
-          <Form.InputNumber field="scheduler.retention.notificationLogsDays" label="通知记录保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
-          <Form.InputNumber field="scheduler.retention.announcementsDays" label="上游公告保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} />
-        </Section>
+          <SettingsSection title="调度与保留策略" description="余额采集、倍率采集和历史数据清理的周期。Cron 带秒，共 6 段。">
+            <Form.Input field="scheduler.balanceCron" label="余额采集 Cron" extraText="余额与消费的同步周期。" className="mono" {...lock("scheduler.balanceCron")} />
+            <Form.Input field="scheduler.rateCron" label="倍率采集 Cron" extraText="分组倍率的扫描周期。" className="mono" {...lock("scheduler.rateCron")} />
+            <Form.InputNumber field="scheduler.concurrency" label="并发数" extraText="每轮最多同时处理的渠道数。" min={1} style={{ width: "100%" }} {...lock("scheduler.concurrency")} />
+            <Form.Input field="scheduler.retention.cron" label="清理任务 Cron" extraText="留空则不清理历史数据。" className="mono" {...lock("scheduler.retention.cron")} />
+            <Form.InputNumber field="scheduler.retention.monitorLogsDays" label="监控日志保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.monitorLogsDays")} />
+            <Form.InputNumber field="scheduler.retention.balanceSnapshotsDays" label="余额快照保留天数" extraText="余额与消费趋势图用这些数据。0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.balanceSnapshotsDays")} />
+            <Form.InputNumber field="scheduler.retention.notificationLogsDays" label="通知记录保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.notificationLogsDays")} />
+            <Form.InputNumber field="scheduler.retention.announcementsDays" label="上游公告保留天数" extraText="0 表示不清理。" min={0} style={{ width: "100%" }} {...lock("scheduler.retention.announcementsDays")} />
+          </SettingsSection>
 
-        <Section title="通知策略" description="怎么过滤和重试通知。">
-          <Form.InputNumber field="notifications.minChangePct" label="最小涨跌幅（%）" extraText="变化幅度低于这个值的倍率变化不通知。" min={0} step={0.01} style={{ width: "100%" }} />
-          <Form.InputNumber field="notifications.balanceLowCooldownMinutes" label="余额不足冷却（分钟）" extraText="同一渠道两次余额告警的最短间隔。" min={0} style={{ width: "100%" }} />
-          <Form.InputNumber field="notifications.sendMaxAttempts" label="发送最大尝试次数" extraText="发送失败后最多尝试几次。" min={1} style={{ width: "100%" }} />
-        </Section>
+          <SettingsSection title="通知策略" description="怎么过滤和重试通知。">
+            <Form.InputNumber field="notifications.minChangePct" label="最小涨跌幅（%）" extraText="变化幅度低于这个值的倍率变化不通知。" min={0} step={0.01} style={{ width: "100%" }} {...lock("notifications.minChangePct")} />
+            <Form.InputNumber field="notifications.balanceLowCooldownMinutes" label="余额不足冷却（分钟）" extraText="同一渠道两次余额告警的最短间隔。" min={0} style={{ width: "100%" }} {...lock("notifications.balanceLowCooldownMinutes")} />
+            <Form.InputNumber field="notifications.sendMaxAttempts" label="发送最大尝试次数" extraText="发送失败后最多尝试几次。" min={1} style={{ width: "100%" }} {...lock("notifications.sendMaxAttempts")} />
+          </SettingsSection>
 
-        <Section title="上游请求" description="访问上游站点时的超时和 User-Agent。">
-          <Form.InputNumber field="upstream.timeoutSeconds" label="超时（秒）" extraText="小于等于 0 时用默认的 30 秒。" min={0} style={{ width: "100%" }} />
-          <Form.Input field="upstream.userAgent" label="User-Agent" extraText="留空用默认值。" />
-        </Section>
-      </Form>
+          <SettingsSection title="上游请求" description="访问上游站点时的超时和 User-Agent。">
+            <Form.InputNumber field="upstream.timeoutSeconds" label="超时（秒）" extraText="小于等于 0 时用默认的 30 秒。" min={0} style={{ width: "100%" }} {...lock("upstream.timeoutSeconds")} />
+            <Form.Input field="upstream.userAgent" label="User-Agent" extraText="留空用默认值。" {...lock("upstream.userAgent")} />
+          </SettingsSection>
+        </Form>
 
-      <div className="sticky-actions">
-        <Typography.Text type={dirty || pendingApply ? "warning" : "tertiary"} size="small">
-          {statusText}
-        </Typography.Text>
-        {query.data?.config_path ? (
-          <Typography.Text type="tertiary" size="small" className="mono truncate" style={{ flex: 1, minWidth: 0 }}>
-            {query.data.config_path}
+        <div className="sticky-actions">
+          <Typography.Text type={dirty || pendingApply ? "warning" : "tertiary"} size="small">
+            {statusText}
           </Typography.Text>
-        ) : (
-          <span style={{ flex: 1 }} />
-        )}
-        <Button onClick={handleApply} loading={applying} disabled={saving}>
-          应用
-        </Button>
-        <Button theme="solid" onClick={handleSave} loading={saving} disabled={applying}>
-          保存
-        </Button>
+          {query.data?.config_path ? (
+            <Typography.Text type="tertiary" size="small" className="mono truncate" style={{ flex: 1, minWidth: 0 }}>
+              {query.data.config_path}
+            </Typography.Text>
+          ) : (
+            <span style={{ flex: 1 }} />
+          )}
+          <Button onClick={handleApply} loading={applying} disabled={saving}>
+            应用
+          </Button>
+          <Button theme="solid" onClick={handleSave} loading={saving} disabled={applying}>
+            保存
+          </Button>
+        </div>
       </div>
+
+      <CCHSyncSection />
 
       {versionCheck.notesOpen ? (
         <Suspense fallback={null}>

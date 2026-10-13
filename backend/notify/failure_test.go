@@ -180,3 +180,26 @@ func TestFormatFailureDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemFailureKindUsesChannelZero(t *testing.T) {
+	d, _ := newTestDispatcher(t, `[{"channel_ids":[1],"mode":"all","events":["cch_sync","recovered"]}]`)
+	ctx := context.Background()
+
+	// 渠道类失败没有渠道 ID 时照旧忽略
+	_ = d.ReportFailure(ctx, Failure{Kind: FailureRates, Err: errors.New("x"), Immediate: true})
+	if got := testRecorder.take(); len(got) != 0 {
+		t.Fatalf("channel failure without channel id must be ignored: %+v", got)
+	}
+
+	_ = d.ReportFailure(ctx, Failure{Kind: FailureCCHSync, Err: errors.New("CCH 返回 401"), Immediate: true})
+	got := testRecorder.take()
+	if len(got) != 1 || got[0].Event != storage.EventCCHSync || got[0].Subject != "CCH 倍率同步失败" || got[0].ChannelID != 0 {
+		t.Fatalf("want a cch sync failure notification, got %+v", got)
+	}
+
+	_ = d.ReportSuccess(ctx, 0, "", FailureCCHSync)
+	got = testRecorder.take()
+	if len(got) != 1 || got[0].Event != storage.EventRecovered || got[0].Subject != "CCH 倍率同步已恢复" {
+		t.Fatalf("want a cch sync recovery notification, got %+v", got)
+	}
+}

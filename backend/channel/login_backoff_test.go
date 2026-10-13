@@ -121,6 +121,13 @@ func TestScheduledLoginPausesOnPermanentError(t *testing.T) {
 		t.Fatalf("second scheduled attempt: err = %v, login calls = %d", err, loginCalls.Load())
 	}
 
+	// 重启后暂停状态还在：从库里读回，定时任务仍然不登录。
+	restarted := NewService(svc.Channels, svc.AuthSessions, svc.Captchas, svc.Rates, svc.MonitorLogs, svc.Cipher)
+	restarted.PersistLoginBackoffs(svc.loginBackoffs.store)
+	if _, err := restarted.EnsureSession(scheduled, ch, resolved, conn); !IsBackoff(err) || loginCalls.Load() != 1 {
+		t.Fatalf("after restart: err = %v, login calls = %d", err, loginCalls.Load())
+	}
+
 	// 手动刷新不受限制。
 	if _, err := svc.EnsureSession(context.Background(), ch, resolved, conn); err == nil || loginCalls.Load() != 2 {
 		t.Fatalf("manual attempt: err = %v, login calls = %d", err, loginCalls.Load())
@@ -133,6 +140,18 @@ func TestScheduledLoginPausesOnPermanentError(t *testing.T) {
 	}
 	if _, err := svc.EnsureSession(scheduled, ch, resolved, conn); IsBackoff(err) || loginCalls.Load() != 3 {
 		t.Fatalf("after update: err = %v, login calls = %d", err, loginCalls.Load())
+	}
+
+	// 解除后库里也清掉了；这次登录又失败，库里是新记的一次，失败次数从 1 开始。
+	rows, err := svc.loginBackoffs.store.List()
+	if err != nil || len(rows) != 1 || rows[0].ChannelID != ch.ID || rows[0].Failures != 1 || !rows[0].Paused {
+		t.Fatalf("stored states = %+v, %v", rows, err)
+	}
+	if err := svc.Delete(ch.ID); err != nil {
+		t.Fatalf("delete channel: %v", err)
+	}
+	if rows, _ := svc.loginBackoffs.store.List(); len(rows) != 0 {
+		t.Fatalf("states left after deleting channel: %+v", rows)
 	}
 }
 

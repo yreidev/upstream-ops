@@ -120,7 +120,9 @@ func AutoMigrate(db *gorm.DB) error {
 		&NotificationLog{},
 		&NotificationCooldown{},
 		&NotificationFailureState{},
+		&LoginBackoffState{},
 		&MonitorLog{},
+		&CCHSyncConfig{},
 		&AppliedMigration{},
 	); err != nil {
 		return err

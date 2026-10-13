@@ -26,6 +26,7 @@ type Scheduler struct {
 	announcements *storage.UpstreamAnnouncements
 	captchas      *storage.Captchas
 	cipher        *crypto.Cipher
+	afterRates    func(context.Context)
 }
 
 // New 构造调度器。
@@ -52,6 +53,12 @@ func New(
 		captchas:      captchas,
 		cipher:        cipher,
 	}
+}
+
+// OnRatesScanned 注册每轮定时倍率采集结束后要跑的任务（把分组倍率同步到 CCH），在 Start 之前调用。
+func (s *Scheduler) OnRatesScanned(fn func(context.Context)) *Scheduler {
+	s.afterRates = fn
+	return s
 }
 
 // Start 注册 cron 任务并启动。
@@ -104,6 +111,12 @@ func (s *Scheduler) runRates() {
 	defer cancel()
 	if s.monitor != nil {
 		s.monitor.ScanAllRates(ctx)
+	}
+	if s.afterRates != nil {
+		// 倍率采集可能把 5 分钟用掉大半，后续任务单独计时。
+		afterCtx, afterCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer afterCancel()
+		s.afterRates(afterCtx)
 	}
 }
 

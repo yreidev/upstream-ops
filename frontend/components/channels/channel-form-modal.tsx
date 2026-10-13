@@ -647,11 +647,11 @@ function NewAPITokenHelp({ kind }: { kind: "cookie" | "access_token" }) {
             <>
               <Typography.Text strong>获取 Cookie</Typography.Text>
               <ol style={{ margin: "4px 0", paddingLeft: 18 }}>
-                <li>在浏览器登录 NewAPI 站点</li>
-                <li>按 F12 打开开发者工具，切到 Application（存储）</li>
-                <li>左侧 Cookies 选中站点域名</li>
-                <li>复制 {code("session")} 的值，格式：{code("session=xxxxx")}</li>
+                <li>在浏览器登录 NewAPI 站点，按 F12 打开开发者工具，切到 Network（网络）</li>
+                <li>刷新页面，点列表里任意一个 {code("/api/")} 开头的请求，如 {code("self")}</li>
+                <li>在 Request Headers（请求标头）里找到 {code("Cookie")}，复制冒号后面的整段，形如 {code("session=xxxxx; ...")}</li>
               </ol>
+              <div>只粘 {code("session")} 的值、漏了前面的 {code("session=")}，上游会当成未登录。</div>
             </>
           )}
           <Typography.Text strong style={{ display: "block", marginTop: 8 }}>

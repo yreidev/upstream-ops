@@ -14,9 +14,15 @@ on:
 permissions:
   contents: read
 
+# actions/checkout 会先 git init，没设默认分支名时 git 每次都打印一段 hint；按 git 的提示把默认分支设成 main。
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -43,7 +49,7 @@ jobs:
         run: go test -count=1 ./...
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: frontend
@@ -52,8 +58,10 @@ jobs:
         uses: actions/checkout@v7
 
       # pnpm 版本取 package.json 的 packageManager。
+      # 写死 v6.1.0：浮动的 v6 标签还停在 v6.0.10，先装 pnpm 11 再自升级到 12，每次都报一条
+      # “Detected a pnpm v10 installation layout” 的误报（pnpm/action-setup#281）；v6.1.0 直接装 pnpm 12，没有这条。
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v6.1.0
         with:
           package_json_file: frontend/package.json
 

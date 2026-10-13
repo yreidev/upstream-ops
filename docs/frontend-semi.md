@@ -54,7 +54,7 @@
 
 ## 做法
 
-1. 在 main 上开分支，直接改写 `frontend/`，不另建目录。演示版（`semi-demo` 分支的 `frontend-semi/`）里的布局和组件拿来参考。
+1. 在 main 上开分支，直接改写 `frontend/`，不另建目录。演示版（`semi-demo` 分支的 `frontend-semi/`，没有入库，v0.4.0 发布后已删除）里的布局和组件拿来参考。
 2. 按页面逐个迁移，每迁完一页跑 `pnpm lint`、`pnpm exec tsc --noEmit`、`pnpm build`。
 3. 全部迁完后，在亮色、暗色、桌面、窄屏下逐页截图核对，并把上面表格里的每个操作都走一遍。
 4. 在 `docs/CHANGELOG.md` 的“未发布”下记录，作为 v0.4.0 发布。
@@ -64,6 +64,8 @@
 和上面方案不一样、或者方案里没写到的地方：
 
 - **VChart 主题**：`initVChartSemiTheme` 放在图表组件里调用，不在入口，这样只有打开总览页才加载图表相关的包。
+- **VChart 按需注册**：`@visactor/vchart` 主入口会注册全部图表类型，react-vchart 的 `CommonChart` 也从主入口引入。图表组件改用 `VChartSimple`，传入 `@visactor/vchart/esm/core` 的 `VChart`，只注册双轴折线图用到的系列、坐标轴、图例、提示框和动画。实测体积变化不大，大头是渲染引擎 vrender。
+- **第三方大库拆块**：`vite.config.ts` 的 `codeSplitting.groups` 把 VChart（按 vutils、vrender-core、vrender、vchart 四个包）、Markdown 解析器、date-fns 单独成块，每块都在 500 kB 的警告线以内。分组会连带收进匹配模块的依赖：最初 react-vchart 也被匹配到，React 跟着进了图表块，入口只好同步加载整个图表块，页面白屏（`Ut is not a function`）；用 `maxSize` 把 vrender-core 切成几块也会互相引用。所以匹配范围里不能有依赖 React 的包，也不用 `maxSize`。改分组后构建通过不代表能用，要在浏览器里打开页面确认。
 - **登录页按需加载**：登录页用了 `Form`，`Form` 会连带打包日期、上传等全部表单控件，所以登录页和 404 页也用 `React.lazy` 拆出去。入口包从 989 KB（gzip 273 KB）降到 326 KB（gzip 100 KB）。
 - **全部分组**：上面表格漏了旧版渠道列表上方的“分组”按钮（所有渠道的分组倍率放在一张表里比较），新版保留，按钮改名“全部分组”。
 
@@ -78,7 +80,7 @@
 - **下拉菜单**：`Dropdown` 默认点菜单项后不收起，要加 `clickToHide`；放在按钮上的都用 `trigger="click"`。
 - **侧边抽屉**：`SideSheet` 默认按 Esc 不关闭，保持默认，避免在抽屉里的弹窗上按 Esc 时连抽屉一起关掉。
 - **Tag 省略**：`Tag` 只有子元素是纯字符串时才会超长省略，需要省略的地方要拼成一个字符串再传。
-- **无障碍名称**：只有图标的按钮都加了中文 `aria-label`；Semi 自带的 `Modal` 底部按钮的 `aria-label` 写死成英文 `confirm`、`cancel`，没有改。
+- **无障碍名称**：只有图标的按钮都加了中文 `aria-label`。Semi 有些读屏名称写死成英文，`LocaleProvider` 管不到：弹窗的 `confirm` / `cancel` / `close`、分页的 `Previous` / `Next`、表格的 `Expand this row`、标签的 `Tag: xxx`、密码框的 `Show password` 等。`lib/aria-labels.ts` 在页面上监听这些名称，换成中文；弹窗底部按钮直接用按钮上的文字。图标默认拿图标名（`home`、`refresh` 这类）当名称，旁边都有文字或按钮自己的名称，统一设成 `aria-hidden`。升级 Semi 后如果出现新的英文名称，在这个文件的表里补上。
 
 ## 验收
 

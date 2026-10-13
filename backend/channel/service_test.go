@@ -57,6 +57,7 @@ func testService(t *testing.T) (*Service, *crypto.Cipher) {
 		storage.NewMonitorLogs(db),
 		cipher,
 	)
+	svc.PersistLoginBackoffs(storage.NewLoginBackoffs(db))
 	return svc, cipher
 }
 

@@ -82,7 +82,8 @@ func TestMigrateNotificationSubscriptions(t *testing.T) {
 	if ids := got[0]["channel_ids"].([]any); len(ids) != 2 {
 		t.Fatalf("covers-all: channel_ids must be kept for rollback, got %v", ids)
 	}
-	wantEvents := []any{"balance_low", "captcha_failed", "login_failed", "monitor_failed", "recovered"}
+	// 最后的 cch_sync 是后面的 20261013_subscription_cch_sync_event 补上的。
+	wantEvents := []any{"balance_low", "captcha_failed", "login_failed", "monitor_failed", "recovered", "cch_sync"}
 	if events := got[0]["events"].([]any); !equalAny(events, wantEvents) {
 		t.Fatalf("covers-all: events = %v, want %v", events, wantEvents)
 	}
@@ -95,7 +96,7 @@ func TestMigrateNotificationSubscriptions(t *testing.T) {
 	}
 	if _, got := load("groups"); got[0]["all_channels"] != nil {
 		t.Fatalf("groups-mode subscription must not become all_channels: %v", got)
-	} else if events := got[0]["events"].([]any); !equalAny(events, []any{"rate_changed", "login_failed", "monitor_failed", "recovered"}) {
+	} else if events := got[0]["events"].([]any); !equalAny(events, []any{"rate_changed", "login_failed", "monitor_failed", "recovered", "cch_sync"}) {
 		t.Fatalf("groups: events = %v", events)
 	}
 	if nc, _ := load("empty"); nc.Subscriptions != "[]" {
@@ -196,4 +197,44 @@ func equalAny(a, b []any) bool {
 		}
 	}
 	return true
+}
+
+func TestAddCCHSyncSubscriptionEvent(t *testing.T) {
+	db := openTestDB(t)
+	fixtures := []NotificationChannel{
+		{Name: "picked", Type: NotifyTelegram, ConfigCipher: "x", Enabled: true,
+			Subscriptions: `[{"channel_ids":[1],"mode":"all","events":["rate_changed","recovered"]},{"channel_ids":[2],"mode":"all"}]`},
+		{Name: "already", Type: NotifyWecom, ConfigCipher: "x", Enabled: true,
+			Subscriptions: `[{"channel_ids":[1],"mode":"all","events":["cch_sync"]}]`},
+		{Name: "everything", Type: NotifyWecom, ConfigCipher: "x", Enabled: true, Subscriptions: "[]"},
+		{Name: "broken", Type: NotifyWecom, ConfigCipher: "x", Enabled: true, Subscriptions: "not json"},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("create %s: %v", fixtures[i].Name, err)
+		}
+	}
+	if err := addCCHSyncSubscriptionEvent(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	got := map[string]string{}
+	var rows []NotificationChannel
+	if err := db.Order("id").Find(&rows).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, r := range rows {
+		got[r.Name] = r.Subscriptions
+	}
+	want := map[string]string{
+		"picked":     `[{"channel_ids":[1],"events":["rate_changed","recovered","cch_sync"],"mode":"all"},{"channel_ids":[2],"mode":"all"}]`,
+		"already":    fixtures[1].Subscriptions,
+		"everything": "[]",
+		"broken":     "not json",
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s subscriptions = %s, want %s", name, got[name], w)
+		}
+	}
 }

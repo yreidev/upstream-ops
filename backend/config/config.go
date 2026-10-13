@@ -165,18 +165,11 @@ func load(path string, withEnv bool) (*Config, string, error) {
 	if withEnv {
 		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 		v.AutomaticEnv()
-		// APP_SECRET / ADMIN_USERNAME / ADMIN_PASSWORD / AUTH_ENABLED 是独立约定的环境变量名，不带前缀。
-		_ = v.BindEnv("security.appSecret", "APP_SECRET")
-		_ = v.BindEnv("auth.enabled", "AUTH_ENABLED")
-		_ = v.BindEnv("auth.username", "ADMIN_USERNAME")
-		_ = v.BindEnv("auth.password", "ADMIN_PASSWORD")
-		_ = v.BindEnv("auth.tokenSecret", "AUTH_TOKEN_SECRET")
 		// Viper 坑：AutomaticEnv 只对已通过 SetDefault / BindEnv / 配置文件注册过的 key 生效，
 		// 因此显式 BindEnv 以确保从环境变量读取。
-		_ = v.BindEnv("database.path", "DATABASE_PATH")
-		_ = v.BindEnv("server.port", "SERVER_PORT")
-		_ = v.BindEnv("server.mode", "SERVER_MODE")
-		_ = v.BindEnv("log.level", "LOG_LEVEL")
+		for key, name := range envBindings {
+			_ = v.BindEnv(key, name)
+		}
 	}
 
 	if err := v.ReadInConfig(); err != nil {

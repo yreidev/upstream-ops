@@ -5,6 +5,7 @@ import type {
   AppVersion,
   BalanceTrendPoint,
   CaptchaConfig,
+  CCHSyncSettings,
   Channel,
   ChannelListOrder,
   ChannelListSort,
@@ -307,4 +308,8 @@ export function useMonitorLogs(channelID: number | undefined, limit: number) {
 
 export function useSystemConfig() {
   return useApi<SystemConfigResponse>("/settings/config")
+}
+
+export function useCCHSyncSettings() {
+  return useApi<CCHSyncSettings>("/cch-sync")
 }

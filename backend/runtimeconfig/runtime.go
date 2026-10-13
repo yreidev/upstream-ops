@@ -111,7 +111,8 @@ func (m *Manager) ApplyFromFile() (*ApplyResult, error) {
 	oldScheduler := m.scheduler
 	m.mu.RUnlock()
 
-	cfg, err := config.LoadFile(path)
+	// 和启动时一样让环境变量盖过配置文件，否则只靠环境变量开的登录会在“应用”后被关掉。
+	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
 	}

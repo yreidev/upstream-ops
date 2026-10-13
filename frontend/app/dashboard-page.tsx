@@ -1,9 +1,19 @@
-import { lazy, Suspense, useMemo, type ReactNode } from "react"
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { Card, Empty, Skeleton, Spin, Tag, Typography } from "@douyinfe/semi-ui"
-import { IconArrowDown, IconArrowUp, IconCoinMoneyStroked, IconCreditCard, IconLineChartStroked, IconServer } from "@douyinfe/semi-icons"
+import { Card, Collapsible, Empty, Skeleton, Spin, Tag, Typography } from "@douyinfe/semi-ui"
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconChevronDown,
+  IconChevronRight,
+  IconCoinMoneyStroked,
+  IconCreditCard,
+  IconLineChartStroked,
+  IconServer,
+} from "@douyinfe/semi-icons"
 import { PageHeader } from "@/components/layout/page-header"
 import type { BalanceCostPoint } from "@/components/charts/balance-cost-chart"
+import { NotificationBody } from "@/components/monitor/notification-body"
 import { notificationEventLabel } from "@/lib/labels"
 import { channelTypeLabel, formatRatio, money, ratioDelta, relativeTime } from "@/lib/format"
 import { useBalanceTrend, useChannels, useCostTrend, useDashboardSummary, useNotificationLogs, useRateChanges } from "@/lib/queries"
@@ -282,6 +292,8 @@ function RecentRateChanges() {
 function RecentNotifications() {
   const logs = useNotificationLogs(1, PREVIEW_SIZE)
   const items = logs.data?.items ?? []
+  // 点一行展开正文，同一时间只展开一条
+  const [openId, setOpenId] = useState<number | null>(null)
 
   return (
     <Card title="最近通知" headerExtraContent={<SeeAll to="/notifications" />} bodyStyle={{ padding: 0 }}>
@@ -295,22 +307,45 @@ function RecentNotifications() {
         <div className="list-rows">
           {items.map((a) => {
             const ev = notificationEventLabel(a.event)
+            const open = openId === a.id
+            const toggle = () => setOpenId(open ? null : a.id)
             return (
-              <div key={a.id} className="row-between" style={{ padding: "10px 16px" }}>
-                <div className="row" style={{ minWidth: 0 }}>
-                  <Tag color={ev.color} style={{ flexShrink: 0 }}>
-                    {ev.label}
-                  </Tag>
-                  <Typography.Text ellipsis={{ showTooltip: true }}>{a.subject}</Typography.Text>
-                  {a.success ? null : (
-                    <Tag color="red" type="ghost" style={{ flexShrink: 0 }}>
-                      发送失败
+              <div key={a.id}>
+                <div
+                  className="row-between clickable-row"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={open}
+                  onClick={toggle}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      toggle()
+                    }
+                  }}
+                  style={{ padding: "10px 16px" }}
+                >
+                  <div className="row" style={{ minWidth: 0 }}>
+                    {open ? <IconChevronDown className="row-chevron" /> : <IconChevronRight className="row-chevron" />}
+                    <Tag color={ev.color} style={{ flexShrink: 0 }}>
+                      {ev.label}
                     </Tag>
-                  )}
+                    <Typography.Text ellipsis={{ showTooltip: true }}>{a.subject}</Typography.Text>
+                    {a.success ? null : (
+                      <Tag color="red" type="ghost" style={{ flexShrink: 0 }}>
+                        发送失败
+                      </Tag>
+                    )}
+                  </div>
+                  <Typography.Text type="tertiary" size="small" style={{ flexShrink: 0 }}>
+                    {a.channel_name ?? `渠道 #${a.channel_id}`} · {relativeTime(a.sent_at)}
+                  </Typography.Text>
                 </div>
-                <Typography.Text type="tertiary" size="small" style={{ flexShrink: 0 }}>
-                  {a.channel_name ?? `渠道 #${a.channel_id}`} · {relativeTime(a.sent_at)}
-                </Typography.Text>
+                <Collapsible isOpen={open} lazyRender>
+                  <div style={{ padding: "0 16px 12px 40px" }}>
+                    <NotificationBody log={a} />
+                  </div>
+                </Collapsible>
               </div>
             )
           })}

@@ -4,7 +4,7 @@ import rehypeRaw from "rehype-raw"
 import rehypeSanitize from "rehype-sanitize"
 
 /**
- * Markdown 渲染：更新日志（GitHub Release）和上游公告都用它。默认导出，调用方用 React.lazy 按需加载（MDX 编译器体积大）。
+ * Markdown 渲染：更新日志（GitHub Release）、上游公告和倍率变动通知的正文都用它。默认导出，调用方用 React.lazy 按需加载（MDX 编译器体积大）。
  *
  * 上游公告来自第三方站点，按不可信内容处理。公告里可能夹着 HTML，所以先用 rehype-raw 解析 HTML，
  * 再用 rehype-sanitize（GitHub 同款白名单）去掉 script、事件属性、style 和 javascript: 链接。

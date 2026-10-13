@@ -13,6 +13,7 @@ export const notificationEventMeta: Record<NotificationEvent, { label: string; c
   captcha_failed: { label: "验证码失败", color: "red" },
   monitor_failed: { label: "采集失败", color: "red" },
   recovered: { label: "故障恢复", color: "green" },
+  cch_sync: { label: "CCH 倍率同步", color: "cyan" },
 }
 
 export function notificationEventLabel(event: string) {
@@ -26,4 +27,5 @@ export const monitorJobLabel: Record<MonitorJob, string> = {
   balance: "余额",
   costs: "消费",
   rates: "倍率",
+  cch_sync: "CCH 同步",
 }

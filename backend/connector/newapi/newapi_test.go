@@ -874,6 +874,50 @@ func TestUpdateAPIKeyNameOnlyKeepsOtherFields(t *testing.T) {
 	}
 }
 
+func TestAPIKeyWriteRestrictedHint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/token/12", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":12,"status":1,"name":"old","group":"pro"}}`))
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"success":false,"message":"Unauthorized, insufficient privileges"}`))
+		}
+	})
+	updateMessage := "Browser session login is required"
+	mux.HandleFunc("/api/token/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"success":false,"message":"` + updateMessage + `"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ch := &connector.Channel{SiteURL: srv.URL}
+	session := &connector.AuthSession{AccessToken: "pat", UserID: "7"}
+	name := "pro"
+	_, err := New().UpdateAPIKey(context.Background(), ch, session, 12, connector.APIKeyUpdateRequest{Name: &name})
+	if err == nil || !strings.Contains(err.Error(), "Browser session login is required") || !strings.Contains(err.Error(), newAPISessionHint) {
+		t.Fatalf("UpdateAPIKey err = %v, want original message plus hint", err)
+	}
+	if connector.StatusCode(err) != http.StatusForbidden {
+		t.Fatalf("StatusCode = %d, want 403", connector.StatusCode(err))
+	}
+
+	// 只接受站点自己网页发起的改动
+	updateMessage = "browser origin required"
+	_, err = New().UpdateAPIKey(context.Background(), ch, &connector.AuthSession{Cookie: "session=abc", UserID: "7"}, 12, connector.APIKeyUpdateRequest{Name: &name})
+	if err == nil || !strings.Contains(err.Error(), "browser origin required") || !strings.Contains(err.Error(), newAPIOriginHint) || strings.Contains(err.Error(), newAPISessionHint) {
+		t.Fatalf("UpdateAPIKey err = %v, want original message plus origin hint", err)
+	}
+
+	// 别的 403 不加提示
+	err = New().DeleteAPIKey(context.Background(), ch, session, 12)
+	if err == nil || strings.Contains(err.Error(), newAPISessionHint) {
+		t.Fatalf("DeleteAPIKey err = %v, want plain 403", err)
+	}
+}
+
 func TestCreateAPIKeyFallsBackToListWhenSearchMisses(t *testing.T) {
 	mux := http.NewServeMux()
 	listCalls := 0

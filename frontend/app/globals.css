@@ -141,13 +141,37 @@ body {
   word-break: break-word;
 }
 
+/* 点了能展开的列表行 */
+.clickable-row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.clickable-row:hover {
+  background-color: var(--semi-color-fill-0);
+}
+
+.clickable-row:focus-visible {
+  outline: 2px solid var(--semi-color-focus-border);
+  outline-offset: -2px;
+}
+
+.row-chevron {
+  flex-shrink: 0;
+  color: var(--semi-color-text-2);
+}
+
 @media (max-width: 767px) {
   .app-header {
     padding: 0 8px;
   }
 
+  /* 手机上滚的是整个页面而不是内容区：overflow: auto 会让内容区变成不滚动的滚动容器，
+     底部浮动栏（sticky）就粘不住；改成 clip 只裁掉横向溢出，不形成滚动容器。 */
   .app-content {
     padding: 12px;
+    overflow-x: clip;
+    overflow-y: visible;
   }
 
   .grid-2 {
