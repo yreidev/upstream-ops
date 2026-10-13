@@ -21,6 +21,7 @@ type Config struct {
 	Scheduler     SchedulerConfig     `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler"`
 	Notifications NotificationsConfig `mapstructure:"notifications" yaml:"notifications" json:"notifications"`
 	Upstream      UpstreamConfig      `mapstructure:"upstream" yaml:"upstream" json:"upstream"`
+	Degrade       DegradeConfig       `mapstructure:"degrade" yaml:"degrade" json:"degrade"`
 	Log           LogConfig           `mapstructure:"log" yaml:"log" json:"log"`
 }
 
@@ -66,8 +67,10 @@ type AuthConfig struct {
 }
 
 type SchedulerConfig struct {
-	BalanceCron string          `mapstructure:"balanceCron" yaml:"balanceCron" json:"balanceCron"`
-	RateCron    string          `mapstructure:"rateCron" yaml:"rateCron" json:"rateCron"`
+	BalanceCron string `mapstructure:"balanceCron" yaml:"balanceCron" json:"balanceCron"`
+	RateCron    string `mapstructure:"rateCron" yaml:"rateCron" json:"rateCron"`
+	// DegradeCron GPT 降智检测的巡检周期，留空不巡检。
+	DegradeCron string          `mapstructure:"degradeCron" yaml:"degradeCron" json:"degradeCron"`
 	Retention   RetentionConfig `mapstructure:"retention" yaml:"retention" json:"retention"`
 }
 
@@ -116,6 +119,33 @@ func (u UpstreamConfig) WithDefaults() UpstreamConfig {
 		u.UserAgent = DefaultUpstreamUserAgent
 	}
 	return u
+}
+
+const (
+	DefaultDegradeModel  = "gpt-6.1-sol"
+	DefaultDegradeEffort = "low"
+)
+
+// DegradeEfforts 降智检测可选的推理强度，和 Codex 客户端的选项一致；none 表示不指定、由上游决定。
+var DegradeEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+
+// DegradeConfig GPT 降智检测默认用的模型和推理强度，单把密钥可以另设。
+// Effort 为 "none" 时不指定推理强度，由上游决定。
+type DegradeConfig struct {
+	Model  string `mapstructure:"model" yaml:"model" json:"model"`
+	Effort string `mapstructure:"effort" yaml:"effort" json:"effort"`
+}
+
+func (d DegradeConfig) WithDefaults() DegradeConfig {
+	d.Model = strings.TrimSpace(d.Model)
+	if d.Model == "" {
+		d.Model = DefaultDegradeModel
+	}
+	d.Effort = strings.TrimSpace(d.Effort)
+	if d.Effort == "" {
+		d.Effort = DefaultDegradeEffort
+	}
+	return d
 }
 
 type LogConfig struct {
@@ -188,6 +218,7 @@ func load(path string, withEnv bool) (*Config, string, error) {
 		return nil, "", fmt.Errorf("unmarshal config: %w", err)
 	}
 	cfg.Upstream = cfg.Upstream.WithDefaults()
+	cfg.Degrade = cfg.Degrade.WithDefaults()
 	return cfg, v.ConfigFileUsed(), nil
 }
 
@@ -247,6 +278,8 @@ func setDefaults(v *viper.Viper) {
 	// CLAUDE.md 默认建议：余额 15 分钟，倍率 30 分钟。
 	v.SetDefault("scheduler.balanceCron", "37 */15 * * * *")
 	v.SetDefault("scheduler.rateCron", "13 */30 * * * *")
+	// 降智检测每次都要花钱，默认不巡检；登记空默认值，SCHEDULER_DEGRADECRON 才能生效
+	v.SetDefault("scheduler.degradeCron", "")
 
 	// 历史清理：每天凌晨 3:17 跑一次（6 字段 cron 含秒），
 	// monitor 30 天 / balance 90 天 / notify 90 天。rate_change_logs 不清理（业务核心数据）。
@@ -268,6 +301,9 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("upstream.timeoutSeconds", DefaultUpstreamTimeoutSeconds)
 	v.SetDefault("upstream.userAgent", DefaultUpstreamUserAgent)
+
+	v.SetDefault("degrade.model", DefaultDegradeModel)
+	v.SetDefault("degrade.effort", DefaultDegradeEffort)
 
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")

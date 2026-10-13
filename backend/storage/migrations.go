@@ -20,7 +20,8 @@ var dataMigrations = []struct {
 }{
 	{name: "20261013_notification_subscriptions", run: migrateNotificationSubscriptions},
 	{name: "20261013_redact_notification_log_secrets", run: redactNotificationLogSecrets},
-	{name: "20261013_subscription_cch_sync_event", run: addCCHSyncSubscriptionEvent},
+	{name: "20261013_subscription_cch_sync_event", run: addSubscriptionEvent(EventCCHSync)},
+	{name: "20261013_subscription_degrade_event", run: addSubscriptionEvent(EventDegrade)},
 }
 
 func runDataMigrations(db *gorm.DB) error {
@@ -157,9 +158,13 @@ func upgradeSubscription(sub map[string]json.RawMessage, existingUpstreams []uin
 	return changed
 }
 
-// addCCHSyncSubscriptionEvent 给"只勾了部分事件"的订阅规则补上新增的 CCH 同步事件，
-// 让已有的通知渠道默认也能收到同步结果；事件列表为空（全部事件）的规则本来就能收到，不用改。
-func addCCHSyncSubscriptionEvent(db *gorm.DB) error {
+// addSubscriptionEvent 给"只勾了部分事件"的订阅规则补上新增的事件（CCH 同步、降智检测），
+// 让已有的通知渠道默认也能收到；事件列表为空（全部事件）的规则本来就能收到，不用改。
+func addSubscriptionEvent(event NotificationEvent) func(*gorm.DB) error {
+	return func(db *gorm.DB) error { return appendSubscriptionEvent(db, event) }
+}
+
+func appendSubscriptionEvent(db *gorm.DB, event NotificationEvent) error {
 	var notifyChannels []NotificationChannel
 	if err := db.Find(&notifyChannels).Error; err != nil {
 		return err
@@ -179,10 +184,10 @@ func addCCHSyncSubscriptionEvent(db *gorm.DB) error {
 			if err := json.Unmarshal(sub["events"], &events); err != nil || len(events) == 0 {
 				continue
 			}
-			if slices.Contains(events, EventCCHSync) {
+			if slices.Contains(events, event) {
 				continue
 			}
-			encoded, err := json.Marshal(append(events, EventCCHSync))
+			encoded, err := json.Marshal(append(events, event))
 			if err != nil {
 				return err
 			}

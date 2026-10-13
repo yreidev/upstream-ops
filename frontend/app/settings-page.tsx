@@ -7,6 +7,7 @@ import { CCHSyncSection } from "@/components/settings/cch-sync-section"
 import { SettingsSection } from "@/components/settings/settings-section"
 import { apiFetch } from "@/lib/api"
 import type { SystemConfig } from "@/lib/api-types"
+import { degradeEfforts } from "@/lib/labels"
 import { useSystemConfig } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
 import { useVersionCheck } from "@/hooks/use-version-check"
@@ -45,6 +46,7 @@ function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfi
       ...base.scheduler,
       balanceCron: str(v.scheduler?.balanceCron),
       rateCron: str(v.scheduler?.rateCron),
+      degradeCron: str(v.scheduler?.degradeCron),
       retention: {
         ...base.scheduler.retention,
         cron: str(v.scheduler?.retention?.cron),
@@ -64,6 +66,11 @@ function buildPayload(base: SystemConfig, v: Partial<SystemConfig>): SystemConfi
       ...base.upstream,
       timeoutSeconds: num(v.upstream?.timeoutSeconds),
       userAgent: str(v.upstream?.userAgent),
+    },
+    degrade: {
+      ...base.degrade,
+      model: str(v.degrade?.model),
+      effort: str(v.degrade?.effort),
     },
   }
 }
@@ -205,6 +212,25 @@ export default function SettingsPage() {
             <Form.InputNumber field="notifications.minChangePct" label="最小涨跌幅（%）" extraText="变化幅度低于这个值的倍率变化不通知。" min={0} step={0.01} style={{ width: "100%" }} {...lock("notifications.minChangePct")} />
             <Form.InputNumber field="notifications.balanceLowCooldownMinutes" label="余额不足冷却（分钟）" extraText="同一渠道两次余额告警的最短间隔。" min={0} style={{ width: "100%" }} {...lock("notifications.balanceLowCooldownMinutes")} />
             <Form.InputNumber field="notifications.sendMaxAttempts" label="发送最大尝试次数" extraText="发送失败后最多尝试几次。" min={1} style={{ width: "100%" }} {...lock("notifications.sendMaxAttempts")} />
+          </SettingsSection>
+
+          <SettingsSection title="GPT 降智检测" description="在“降智检测”页加入的密钥按这里的周期巡检；模型和推理强度可以在那页按密钥单独设置。">
+            <Form.Input
+              field="scheduler.degradeCron"
+              label="降智巡检 Cron"
+              extraText="留空不定时巡检，只在“降智检测”页手动检测。每轮每把密钥至少问一次，每次大约 1.8 万输入 token。"
+              className="mono"
+              {...lock("scheduler.degradeCron")}
+            />
+            <Form.Input field="degrade.model" label="默认模型" extraText="密钥没有单独设置时用这个模型，中转站的分组里得有它。" className="mono" {...lock("degrade.model")} />
+            <Form.Select
+              field="degrade.effort"
+              label="默认推理强度"
+              extraText="“不指定”表示请求里不带推理强度，由上游决定。"
+              style={{ width: "100%" }}
+              optionList={degradeEfforts.map((e) => ({ value: e, label: e === "none" ? "不指定" : e }))}
+              {...lock("degrade.effort")}
+            />
           </SettingsSection>
 
           <SettingsSection title="上游请求" description="访问上游站点时的超时和 User-Agent。">

@@ -41,6 +41,13 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 	rates := storage.NewRates(db)
 
 	oldTime := time.Now().AddDate(0, 0, -10)
+	// 降智检测记录跟监控日志的天数
+	degradeKeys := storage.NewDegradeKeys(db)
+	for _, at := range []time.Time{oldTime, time.Now()} {
+		if err := degradeKeys.AppendCheck(&storage.DegradeCheck{KeyID: 1, ChannelID: 1, Attempt: 1, Model: "m", Result: storage.DegradeCorrect, CheckedAt: at}); err != nil {
+			t.Fatalf("append check: %v", err)
+		}
+	}
 	if _, err := announcements.Sync(1, []storage.UpstreamAnnouncement{{
 		ChannelID:   1,
 		SourceKey:   "old",
@@ -56,6 +63,7 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 		config.SchedulerConfig{
 			Retention: config.RetentionConfig{
 				AnnouncementsDays: 1,
+				MonitorLogsDays:   7,
 			},
 		},
 		&monitor.Service{},
@@ -66,7 +74,7 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 		nil,
 		nil,
 		log,
-	).WithJobs(jobs.NewRunner(jobRepo, log))
+	).WithJobs(jobs.NewRunner(jobRepo, log)).WithDegrade(degradeKeys, nil)
 
 	s.runRetention()
 
@@ -83,8 +91,11 @@ func TestRunRetentionDeletesAnnouncements(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("retention jobs = %d, %v", n, err)
 	}
-	if got := recorded[0]; got.Source != storage.JobScheduled || got.Status != storage.JobSucceeded || got.Message != "删除了上游公告 1 条" {
+	if got := recorded[0]; got.Source != storage.JobScheduled || got.Status != storage.JobSucceeded || got.Message != "删除了降智检测记录 1 条、上游公告 1 条" {
 		t.Fatalf("retention job = %+v", got)
+	}
+	if left, _ := degradeKeys.ListChecks(1, 10); len(left) != 1 {
+		t.Fatalf("degrade checks left = %d, want only the recent one", len(left))
 	}
 }
 

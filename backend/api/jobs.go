@@ -87,6 +87,7 @@ var (
 	jobKinds = map[storage.JobKind]bool{
 		storage.JobChannelSync: true, storage.JobChannelTestLogin: true, storage.JobChannelSyncAll: true,
 		storage.JobBalanceScan: true, storage.JobRateScan: true, storage.JobCCHSync: true, storage.JobRetention: true,
+		storage.JobDegradeCheck: true, storage.JobDegradeCheckAll: true,
 	}
 	jobSources  = map[storage.JobSource]bool{storage.JobManual: true, storage.JobScheduled: true}
 	jobStatuses = map[storage.JobStatus]bool{

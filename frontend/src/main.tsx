@@ -18,6 +18,7 @@ const DashboardPage = lazy(() => import('@/app/dashboard-page'))
 const ChannelsPage = lazy(() => import('@/app/channels-page'))
 const RatesPage = lazy(() => import('@/app/rates-page'))
 const AnnouncementsPage = lazy(() => import('@/app/announcements-page'))
+const DegradePage = lazy(() => import('@/app/degrade-page'))
 const NotificationsPage = lazy(() => import('@/app/notifications-page'))
 const CaptchaPage = lazy(() => import('@/app/captcha-page'))
 const JobsPage = lazy(() => import('@/app/jobs-page'))
@@ -38,6 +39,7 @@ createRoot(document.getElementById('root')!).render(
                   <Route path="channels" element={<ChannelsPage />} />
                   <Route path="rates" element={<RatesPage />} />
                   <Route path="announcements" element={<AnnouncementsPage />} />
+                  <Route path="degrade" element={<DegradePage />} />
                   <Route path="notifications" element={<NotificationsPage />} />
                   <Route path="captcha" element={<CaptchaPage />} />
                   <Route path="jobs" element={<JobsPage />} />

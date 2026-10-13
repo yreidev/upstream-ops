@@ -50,6 +50,8 @@ Thumbs.db
 
 # Docker volumes
 data/
+# 降智检测嵌入的题目数据，不是数据卷
+!backend/degrade/data/
 postgres-data/
 
 # Claude / AI tooling

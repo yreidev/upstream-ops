@@ -21,6 +21,7 @@ import { apiFetch } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 import { confirm } from "@/lib/confirm"
 import { channelTypeLabel, dateTime, decimal, formatRatio } from "@/lib/format"
+import { apiKeyStatusMeta } from "@/lib/labels"
 import type {
   Channel,
   ChannelAPIKey,
@@ -171,13 +172,6 @@ function renameIssueText(issues: ChannelAPIKeyRenameIssue[]) {
   })
   if (byReason.size > RENAME_ISSUE_LIMIT) lines.push(`…还有 ${byReason.size - RENAME_ISSUE_LIMIT} 种原因`)
   return lines.join("\n")
-}
-
-const keyStatusMeta: Record<string, { label: string; color: TagColor }> = {
-  active: { label: "启用", color: "green" },
-  disabled: { label: "停用", color: "grey" },
-  expired: { label: "已过期", color: "orange" },
-  quota_exhausted: { label: "额度耗尽", color: "orange" },
 }
 
 function splitLines(value: string): string[] {
@@ -672,7 +666,7 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
       dataIndex: "status",
       width: 80,
       render: (v: string) => {
-        const meta = keyStatusMeta[v] ?? { label: v || "未知", color: "grey" as TagColor }
+        const meta = apiKeyStatusMeta[v] ?? { label: v || "未知", color: "grey" as TagColor }
         return <Tag color={meta.color}>{meta.label}</Tag>
       },
     },

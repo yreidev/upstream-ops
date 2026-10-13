@@ -65,6 +65,7 @@ type Deps struct {
 	ChannelSvc    channelService
 	Monitor       monitorService
 	CCHSync       cchSyncService
+	Degrade       degradeService
 	Jobs          jobStarter
 	JobRepo       *storage.BackgroundJobs
 	Dispatcher    *notify.Dispatcher
@@ -109,6 +110,9 @@ func Register(r *gin.Engine, d *Deps) {
 		}
 		if d.CCHSync != nil {
 			registerCCHSync(api, d)
+		}
+		if d.Degrade != nil {
+			registerDegrade(api, d)
 		}
 	}
 

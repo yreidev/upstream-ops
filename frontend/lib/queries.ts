@@ -15,6 +15,8 @@ import type {
   ChannelPage,
   CostTrendPoint,
   DashboardSummary,
+  DegradeCheck,
+  DegradeKeyList,
   JobKind,
   JobSource,
   JobStatus,
@@ -337,4 +339,14 @@ export function useSystemConfig() {
 
 export function useCCHSyncSettings() {
   return useApi<CCHSyncSettings>("/cch-sync")
+}
+
+/** 参与降智检测的密钥，带默认模型和巡检 Cron。 */
+export function useDegradeKeys() {
+  return useApi<DegradeKeyList>("/degrade/keys")
+}
+
+/** 一把密钥最近的检测记录，新的在前。 */
+export function useDegradeChecks(keyId: number) {
+  return useApi<DegradeCheck[]>(`/degrade/keys/${keyId}/checks?limit=30`)
 }

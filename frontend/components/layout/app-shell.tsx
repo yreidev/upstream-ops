@@ -19,6 +19,7 @@ import {
   IconSetting,
   IconShield,
   IconSun,
+  IconTestScore,
 } from "@douyinfe/semi-icons"
 import { useAuth } from "@/lib/auth-context"
 import { relativeTime } from "@/lib/format"
@@ -40,6 +41,7 @@ const NAV_ITEMS: { itemKey: string; text: string; icon: ReactNode }[] = [
   { itemKey: "/channels", text: "渠道", icon: <IconServer /> },
   { itemKey: "/rates", text: "倍率变化", icon: <IconLineChartStroked /> },
   { itemKey: "/announcements", text: "上游公告", icon: <IconHorn /> },
+  { itemKey: "/degrade", text: "降智检测", icon: <IconTestScore /> },
   { itemKey: "/notifications", text: "通知", icon: <IconBell /> },
   { itemKey: "/captcha", text: "打码平台", icon: <IconShield /> },
   { itemKey: "/jobs", text: "后台任务", icon: <IconClock /> },

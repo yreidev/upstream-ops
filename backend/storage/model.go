@@ -256,6 +256,8 @@ const (
 	// EventCCHSync 把上游分组倍率同步到 CCH 成本倍率：改了哪些供应商，或同步失败。
 	// 不属于某个上游渠道，消息的 ChannelID 为 0，订阅过滤只看事件。
 	EventCCHSync NotificationEvent = "cch_sync"
+	// EventDegrade GPT 降智检测确认了某把密钥降智或恢复。
+	EventDegrade NotificationEvent = "degrade"
 )
 
 // NotificationLog 通知发送记录。

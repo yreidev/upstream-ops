@@ -61,6 +61,7 @@ const notificationEventOptions: Array<{ id: string; label: string; events: Notif
   { id: "monitor_failed", label: "采集失败", events: ["monitor_failed"] },
   { id: "recovered", label: "故障恢复", events: ["recovered"] },
   { id: "cch_sync", label: "CCH 倍率同步", events: ["cch_sync"] },
+  { id: "degrade", label: "降智检测", events: ["degrade"] },
 ]
 
 const allNotificationEvents = Array.from(new Set(notificationEventOptions.flatMap((option) => option.events)))

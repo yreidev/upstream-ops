@@ -4,6 +4,7 @@ package runtimeconfig
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type Manager struct {
 	scheduler        *scheduler.Scheduler
 	appConfig        config.AppConfig
 	upstreamConfig   config.UpstreamConfig
+	onApply          []func(*config.Config)
 }
 
 func New(
@@ -107,6 +109,13 @@ func (m *Manager) AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
+// OnApply 登记保存设置后要跟着更新的地方（比如降智检测的默认模型），在程序启动时调用。
+func (m *Manager) OnApply(fn func(*config.Config)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onApply = append(m.onApply, fn)
+}
+
 // Validate 检查设置页能改的配置能不能生效，有错返回给页面的中文说明。
 // 保存前先调用：写错的 cron 一旦写进配置文件，下次启动调度器起不来，进程会直接退出。
 func (m *Manager) Validate(cfg *config.Config) error {
@@ -114,6 +123,7 @@ func (m *Manager) Validate(cfg *config.Config) error {
 		{"余额采集 Cron", cfg.Scheduler.BalanceCron},
 		{"倍率采集 Cron", cfg.Scheduler.RateCron},
 		{"清理任务 Cron", cfg.Scheduler.Retention.Cron},
+		{"降智巡检 Cron", cfg.Scheduler.DegradeCron},
 	}
 	for _, c := range crons {
 		if c.spec == "" {
@@ -122,6 +132,9 @@ func (m *Manager) Validate(cfg *config.Config) error {
 		if scheduler.ParseSpec(c.spec) != nil {
 			return cronError(c.label, c.spec)
 		}
+	}
+	if effort := strings.TrimSpace(cfg.Degrade.Effort); effort != "" && !slices.Contains(config.DegradeEfforts, effort) {
+		return fmt.Errorf("降智检测的推理强度只能是 %s", strings.Join(config.DegradeEfforts, "、"))
 	}
 	if cfg.Auth.Enabled {
 		if cfg.Auth.Username == "" {
@@ -185,7 +198,11 @@ func (m *Manager) Apply(cfg *config.Config) error {
 	m.scheduler = newScheduler
 	m.appConfig = cfg.App
 	m.upstreamConfig = cfg.Upstream.WithDefaults()
+	hooks := m.onApply
 	m.mu.Unlock()
+	for _, fn := range hooks {
+		fn(cfg)
+	}
 
 	if oldScheduler != nil {
 		oldScheduler.Stop()

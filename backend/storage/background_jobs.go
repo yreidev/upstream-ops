@@ -17,6 +17,8 @@ const (
 	JobRateScan         JobKind = "rate_scan"          // 定时倍率采集
 	JobCCHSync          JobKind = "cch_sync"           // 把分组倍率同步到 CCH
 	JobRetention        JobKind = "retention"          // 定时清理过期历史
+	JobDegradeCheck     JobKind = "degrade_check"      // 降智检测：手动检测一把密钥
+	JobDegradeCheckAll  JobKind = "degrade_check_all"  // 降智检测：全部密钥，手动或定时巡检
 )
 
 // JobSource 任务是怎么触发的。

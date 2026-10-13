@@ -180,7 +180,7 @@ export default function JobsPage() {
     <div className="page">
       <PageHeader
         title="后台任务"
-        description="手动点的同步、测试登录、CCH 同步，以及每轮定时采集和清理，都在后台跑完并记在这里，关掉页面也不影响。展开一行看每一步；记录和监控日志一起按保留天数清理。"
+        description="手动点的同步、测试登录、CCH 同步、降智检测，以及每轮定时采集、巡检和清理，都在后台跑完并记在这里，关掉页面也不影响。展开一行看每一步；记录和监控日志一起按保留天数清理。"
         actions={
           <>
             <Select

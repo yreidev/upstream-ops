@@ -19,6 +19,7 @@ const (
 	StageBalance Stage = "balance"
 	StageCost    Stage = "cost"
 	StageRates   Stage = "rates"
+	StageDegrade Stage = "degrade"
 	StageDone    Stage = "done"
 	StageSkipped Stage = "skipped"
 	StageError   Stage = "error"

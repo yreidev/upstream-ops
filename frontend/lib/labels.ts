@@ -1,5 +1,7 @@
 import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
 import type {
+  DegradeResult,
+  DegradeState,
   JobKind,
   JobSource,
   JobStatus,
@@ -20,6 +22,7 @@ export const notificationEventMeta: Record<NotificationEvent, { label: string; c
   monitor_failed: { label: "采集失败", color: "red" },
   recovered: { label: "故障恢复", color: "green" },
   cch_sync: { label: "CCH 倍率同步", color: "cyan" },
+  degrade: { label: "降智检测", color: "pink" },
 }
 
 export function notificationEventLabel(event: string) {
@@ -45,6 +48,8 @@ export const jobKindLabel: Record<JobKind, string> = {
   rate_scan: "倍率采集",
   cch_sync: "CCH 同步",
   retention: "清理历史",
+  degrade_check: "降智检测",
+  degrade_check_all: "全部降智检测",
 }
 
 export const jobSourceLabel: Record<JobSource, string> = {
@@ -57,4 +62,33 @@ export const jobStatusMeta: Record<JobStatus, { label: string; color: TagColor }
   succeeded: { label: "成功", color: "green" },
   failed: { label: "失败", color: "red" },
   interrupted: { label: "被中断", color: "amber" },
+}
+
+/** 降智检测确认过的状态。 */
+export const degradeStateMeta: Record<DegradeState, { label: string; color: TagColor }> = {
+  unknown: { label: "未确认", color: "grey" },
+  normal: { label: "正常", color: "green" },
+  degraded: { label: "降智", color: "red" },
+}
+
+/** 一次检测的结果。 */
+export const degradeResultMeta: Record<DegradeResult, { label: string; color: TagColor }> = {
+  correct: { label: "答对", color: "green" },
+  wrong: { label: "答错", color: "red" },
+  failed: { label: "请求失败", color: "orange" },
+}
+
+/** 降智检测可选的推理强度（backend/config DegradeEfforts）；none 表示请求里不带，由上游决定。 */
+export const degradeEfforts = ["none", "low", "medium", "high", "xhigh", "max"] as const
+
+export function degradeEffortLabel(effort: string) {
+  return effort === "none" ? "不指定" : effort
+}
+
+/** 上游密钥的状态（connector APIKey.Status）。 */
+export const apiKeyStatusMeta: Record<string, { label: string; color: TagColor }> = {
+  active: { label: "启用", color: "green" },
+  disabled: { label: "停用", color: "grey" },
+  expired: { label: "已过期", color: "orange" },
+  quota_exhausted: { label: "额度耗尽", color: "orange" },
 }

@@ -28,6 +28,7 @@ export type NotificationEvent =
   | "monitor_failed"
   | "recovered"
   | "cch_sync"
+  | "degrade"
 
 export interface Channel {
   id: number
@@ -196,6 +197,8 @@ export type JobKind =
   | "rate_scan"
   | "cch_sync"
   | "retention"
+  | "degrade_check"
+  | "degrade_check_all"
 export type JobSource = "manual" | "scheduled"
 export type JobStatus = "running" | "succeeded" | "failed" | "interrupted"
 
@@ -207,6 +210,7 @@ export type ProgressStage =
   | "balance"
   | "cost"
   | "rates"
+  | "degrade"
   | "done"
   | "skipped"
   | "error"
@@ -316,6 +320,8 @@ export interface SystemSchedulerRetentionConfig {
 export interface SystemSchedulerConfig {
   balanceCron: string
   rateCron: string
+  /** 降智巡检；空表示不定时巡检。 */
+  degradeCron: string
   retention: SystemSchedulerRetentionConfig
 }
 
@@ -330,12 +336,19 @@ export interface SystemUpstreamConfig {
   userAgent: string
 }
 
+/** GPT 降智检测的默认模型和推理强度，单把密钥可以另设。 */
+export interface SystemDegradeConfig {
+  model: string
+  effort: string
+}
+
 export interface SystemConfig {
   app: AppConfig
   auth: SystemAuthConfig
   scheduler: SystemSchedulerConfig
   notifications: SystemNotificationsConfig
   upstream: SystemUpstreamConfig
+  degrade: SystemDegradeConfig
 }
 
 export interface SystemConfigResponse {
@@ -373,6 +386,87 @@ export interface CCHSyncSettings {
   last_run_at?: string
   last_summary?: string
   last_error?: string
+}
+
+/** GPT 降智检测（backend/storage/degrade.go、backend/degrade/service.go）。 */
+export type DegradeState = "unknown" | "normal" | "degraded"
+export type DegradeResult = "correct" | "wrong" | "failed"
+
+/** 参与检测的一把密钥；model / effort 为空表示用默认值，effective_* 是实际用的。 */
+export interface DegradeKey {
+  id: number
+  channel_id: number
+  upstream_key_id: number
+  name: string
+  group_name: string
+  key_tail: string
+  key_source: "revealed" | "pasted"
+  model: string
+  effort: string
+  state: DegradeState
+  state_changed_at?: string
+  last_checked_at?: string
+  last_result?: DegradeResult
+  last_message?: string
+  created_at: string
+  updated_at: string
+  channel_name: string
+  channel_type: ChannelType | ""
+  effective_model: string
+  effective_effort: string
+  /** 正在跑检测（单独检测或全部检测）。 */
+  checking: boolean
+}
+
+export interface DegradeKeyList {
+  items: DegradeKey[]
+  defaults: SystemDegradeConfig
+  /** 降智巡检 Cron，空表示没开。 */
+  cron: string
+}
+
+/** 一次检测（一道题）；attempt 1 是首测，2、3 是复测。 */
+export interface DegradeCheck {
+  id: number
+  key_id: number
+  channel_id: number
+  attempt: number
+  model: string
+  effort: string
+  result: DegradeResult
+  answer?: string
+  error?: string
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  duration_ms: number
+  checked_at: string
+}
+
+/** 渠道里可以加入检测的上游密钥。 */
+export interface DegradeCandidate {
+  id: number
+  name: string
+  group_name: string
+  group_ratio: number
+  status: string
+  key_tail?: string
+  added: boolean
+}
+
+/** 一把密钥一轮检测的结果，是单独检测任务的 result。 */
+export interface DegradeRound {
+  key_id: number
+  label: string
+  model: string
+  effort: string
+  results: DegradeResult[]
+  before: DegradeState
+  state: DegradeState
+  changed: boolean
+  message: string
+  error?: string
+  busy?: boolean
 }
 
 /** 一个 CCH 供应商的配对和同步结果（backend/cch/sync.go Status）。 */

@@ -175,3 +175,51 @@ func TestSettingsRespectEnvOverrides(t *testing.T) {
 		t.Fatal("login was turned off by saving a config file that predates AUTH_ENABLED")
 	}
 }
+
+func TestSaveSettingsDegrade(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.Save(path, &config.Config{App: config.AppConfig{Title: "Old"}}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	r := gin.New()
+	rt := newSettingsRuntime(path)
+	var applied config.DegradeConfig
+	rt.OnApply(func(c *config.Config) { applied = c.Degrade })
+	registerSettings(r.Group("/api"), &Deps{Runtime: rt})
+
+	body := func(degradeCron, effort string) string {
+		return `{
+			"app":{"title":"Old","notificationPrefix":""},
+			"auth":{"enabled":false},
+			"scheduler":{"balanceCron":"","rateCron":"","degradeCron":"` + degradeCron + `","retention":{"cron":""}},
+			"notifications":{"minChangePct":0,"balanceLowCooldownMinutes":60,"sendMaxAttempts":3},
+			"upstream":{},
+			"degrade":{"model":"gpt-test","effort":"` + effort + `"}
+		}`
+	}
+	if rec := putSettings(r, body("0 0 * * *", "low")); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "降智巡检 Cron") {
+		t.Fatalf("bad cron: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := putSettings(r, body("", "extreme")); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "推理强度") {
+		t.Fatalf("bad effort: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := putSettings(r, body("0 0 */6 * * *", "high")); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got.Scheduler.DegradeCron != "0 0 */6 * * *" || got.Degrade.Model != "gpt-test" || got.Degrade.Effort != "high" {
+		t.Fatalf("saved scheduler = %#v degrade = %#v", got.Scheduler, got.Degrade)
+	}
+	// 保存后默认模型立即生效
+	if applied.Model != "gpt-test" || applied.Effort != "high" {
+		t.Fatalf("applied = %#v", applied)
+	}
+	// 留空回到默认值
+	if rec := putSettings(r, body("", "")); rec.Code != http.StatusOK || applied.Effort != config.DefaultDegradeEffort {
+		t.Fatalf("empty effort: status = %d, applied = %#v", rec.Code, applied)
+	}
+}
