@@ -61,9 +61,17 @@ UpstreamOps 主要解决这些痛点：
 
 ![上游公告](docs/images/announcement.png)
 
+降智检测：每把密钥的状态和最近一轮结论，点开一行看每次的回答、用量和耗时。
+
+![降智检测](docs/images/degrade.png)
+
 通知：Telegram、企业微信通知渠道和发送记录。
 
 ![通知](docs/images/notifications.png)
+
+后台任务：手动同步、测试登录、降智检测和每轮定时采集、巡检、清理都记在这里，点开一行看每一步。
+
+![后台任务](docs/images/jobs.png)
 
 监控日志：每次登录、校验会话、采集余额、消费和倍率的结果与耗时。
 
@@ -285,7 +293,7 @@ IMAGE_TAG=latest
 生产环境建议锁定具体版本，例如：
 
 ```env
-IMAGE_TAG=v0.5.1
+IMAGE_TAG=v0.6.0
 ```
 
 ## 环境变量
