@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 type BalanceResult struct {

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bejix/upstream-ops/backend/channel"
-	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/channel"
+	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 type channelMetaOut struct {

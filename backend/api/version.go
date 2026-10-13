@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/config"
-	"github.com/bejix/upstream-ops/backend/global"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/global"
 )
 
 const (

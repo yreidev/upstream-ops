@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/bejix/upstream-ops/backend/notify"
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/notify"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 func registerNotifications(g *gin.RouterGroup, d *Deps) {

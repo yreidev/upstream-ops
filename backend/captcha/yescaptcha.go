@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 func init() {

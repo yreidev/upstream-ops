@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/bejix/upstream-ops/backend/config"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/config"
 )
 
 type settingsConfigView struct {

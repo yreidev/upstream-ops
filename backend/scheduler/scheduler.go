@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/captcha"
-	"github.com/bejix/upstream-ops/backend/config"
-	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/monitor"
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/robfig/cron/v3"
+	"github.com/yreidev/upstream-ops/backend/captcha"
+	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/monitor"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 // Scheduler 周期性任务调度器。

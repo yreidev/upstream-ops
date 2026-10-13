@@ -12,23 +12,23 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/api"
-	"github.com/bejix/upstream-ops/backend/auth"
-	"github.com/bejix/upstream-ops/backend/channel"
-	"github.com/bejix/upstream-ops/backend/config"
-	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/logger"
-	"github.com/bejix/upstream-ops/backend/monitor"
-	"github.com/bejix/upstream-ops/backend/notify"
-	"github.com/bejix/upstream-ops/backend/runtimeconfig"
-	"github.com/bejix/upstream-ops/backend/scheduler"
-	"github.com/bejix/upstream-ops/backend/storage"
-	"github.com/bejix/upstream-ops/web"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/api"
+	"github.com/yreidev/upstream-ops/backend/auth"
+	"github.com/yreidev/upstream-ops/backend/channel"
+	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/logger"
+	"github.com/yreidev/upstream-ops/backend/monitor"
+	"github.com/yreidev/upstream-ops/backend/notify"
+	"github.com/yreidev/upstream-ops/backend/runtimeconfig"
+	"github.com/yreidev/upstream-ops/backend/scheduler"
+	"github.com/yreidev/upstream-ops/backend/storage"
+	"github.com/yreidev/upstream-ops/web"
 
 	// 注册 connector 实现。
-	_ "github.com/bejix/upstream-ops/backend/connector/newapi"
-	_ "github.com/bejix/upstream-ops/backend/connector/sub2api"
+	_ "github.com/yreidev/upstream-ops/backend/connector/newapi"
+	_ "github.com/yreidev/upstream-ops/backend/connector/sub2api"
 )
 
 func main() {

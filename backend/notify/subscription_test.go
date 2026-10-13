@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bejix/upstream-ops/backend/storage"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 func TestSubscriptionMatchesLegacyAllEvents(t *testing.T) {

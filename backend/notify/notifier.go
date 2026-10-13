@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bejix/upstream-ops/backend/storage"
+	"github.com/yreidev/upstream-ops/backend/storage"
 )
 
 // Message 待发送的通知消息。

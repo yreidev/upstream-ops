@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bejix/upstream-ops/backend/config"
-	"github.com/bejix/upstream-ops/backend/runtimeconfig"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/config"
+	"github.com/yreidev/upstream-ops/backend/runtimeconfig"
 )
 
 func TestSaveSettingsKeepsAppVersion(t *testing.T) {

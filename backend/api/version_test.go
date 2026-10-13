@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bejix/upstream-ops/backend/global"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/global"
 )
 
 func TestIsVersionNewer(t *testing.T) {

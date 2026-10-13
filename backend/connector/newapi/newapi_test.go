@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bejix/upstream-ops/backend/connector"
+	"github.com/yreidev/upstream-ops/backend/connector"
 )
 
 func TestSetHTTPConfigAppliesUserAgentAndTimeout(t *testing.T) {

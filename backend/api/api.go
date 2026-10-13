@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/bejix/upstream-ops/backend/channel"
-	"github.com/bejix/upstream-ops/backend/connector"
-	"github.com/bejix/upstream-ops/backend/crypto"
-	"github.com/bejix/upstream-ops/backend/notify"
-	"github.com/bejix/upstream-ops/backend/runtimeconfig"
-	"github.com/bejix/upstream-ops/backend/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/yreidev/upstream-ops/backend/channel"
+	"github.com/yreidev/upstream-ops/backend/connector"
+	"github.com/yreidev/upstream-ops/backend/crypto"
+	"github.com/yreidev/upstream-ops/backend/notify"
+	"github.com/yreidev/upstream-ops/backend/runtimeconfig"
+	"github.com/yreidev/upstream-ops/backend/storage"
 	"gorm.io/gorm"
 )
 

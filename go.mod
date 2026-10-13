@@ -1,4 +1,4 @@
-module github.com/bejix/upstream-ops
+module github.com/yreidev/upstream-ops
 
 go 1.23
 
