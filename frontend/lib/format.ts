@@ -69,11 +69,15 @@ export function fullDateTime(iso?: string | null): string {
   return `${y}/${m}/${day} ${h}:${min}:${s}`
 }
 
-/** 毫秒 → 可读延迟，如 7.98s / 52.95s / 120ms */
+/** 毫秒 → 可读耗时，如 120ms / 7.98s / 52.95s / 2 分 8 秒 / 1 小时 5 分 */
 export function formatDurationMS(ms?: number | null): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—"
   if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
+  // 59.995 秒起 toFixed(2) 会进位成 60.00s，从这里开始按分秒显示
+  if (ms < 59_995) return `${(ms / 1000).toFixed(2)}s`
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`
 }
 
 /**

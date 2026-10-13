@@ -38,8 +38,8 @@ import { PageHeader } from "@/components/layout/page-header"
 import { AllGroupsModal } from "@/components/channels/all-groups-modal"
 import { ChannelAPIKeysSheet, type ChannelAPIKeyInitialAction } from "@/components/channels/channel-api-keys-sheet"
 import { ChannelFormModal } from "@/components/channels/channel-form-modal"
+import { ChannelGroupsSheet } from "@/components/channels/channel-groups-sheet"
 import {
-  ChannelRatesTable,
   ChannelStatusTags,
   SyncProgress,
   emptySyncState,
@@ -182,6 +182,7 @@ export default function ChannelsPage() {
   const [redeeming, setRedeeming] = useState<Channel | null>(null)
   const [recharging, setRecharging] = useState<Channel | null>(null)
   const [apiKeySheet, setAPIKeySheet] = useState<APIKeySheetState | null>(null)
+  const [groupsOf, setGroupsOf] = useState<Channel | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [expandedKeys, setExpandedKeys] = useState<number[]>([])
   const [syncState, setSyncState] = useState<Record<number, ChannelSyncState>>({})
@@ -457,6 +458,7 @@ export default function ChannelsPage() {
       )
     return [
       button("sync", "同步", <IconRefresh spin={syncing} />, () => void syncChannel(c), { disabled }),
+      button("groups", "分组", <IconList />, () => setGroupsOf(c)),
       button("keys", "密钥", <IconKey />, () => setAPIKeySheet({ channel: c })),
       button("edit", "编辑", <IconEdit />, () => openForm(c)),
       <Dropdown
@@ -518,7 +520,6 @@ export default function ChannelsPage() {
             </Typography.Paragraph>
           </div>
         ) : null}
-        <ChannelRatesTable channel={c} onAPIKeyAction={onAPIKeyAction} />
       </div>
     )
   }
@@ -701,7 +702,7 @@ export default function ChannelsPage() {
             setExpandedKeys((keys) => (expanded ? [...keys, id] : keys.filter((k) => k !== id)))
           }}
           expandedRowRender={(c?: Channel) => (c ? expandedContent(c) : null)}
-          rowExpandable={() => true}
+          rowExpandable={(c?: Channel) => (c ? hasDetails(c, syncState[c.id]) : false)}
         />
       </Card>
     )
@@ -834,12 +835,18 @@ export default function ChannelsPage() {
       <AllGroupsModal visible={groupsOpen} onClose={() => setGroupsOpen(false)} channels={channels ?? []} onAPIKeyAction={onAPIKeyAction} />
       <ChannelRedeemModal channel={redeeming} onClose={() => setRedeeming(null)} />
       <ChannelRechargeModal channel={recharging} onClose={() => setRecharging(null)} />
+      <ChannelGroupsSheet channel={groupsOf} onClose={() => setGroupsOf(null)} onAPIKeyAction={onAPIKeyAction} />
       <ChannelAPIKeysSheet channel={apiKeySheet?.channel ?? null} initialAction={apiKeySheet?.initialAction} onClose={() => setAPIKeySheet(null)} />
     </div>
   )
 }
 
-/** 窄屏下的渠道卡片：字段和操作与表格一致，分组倍率点开再看。 */
+/** 展开行放同步进度、最近报错和备注，都没有时不给展开。 */
+function hasDetails(c: Channel, sync?: ChannelSyncState): boolean {
+  return !!sync || !!c.last_error || !!c.notes
+}
+
+/** 窄屏下的渠道卡片：字段和操作与表格一致，报错和备注点开再看。 */
 function ChannelCard({ channel: c, sync, actions, expanded, onToggle, expandedContent }: {
   channel: Channel
   sync?: ChannelSyncState
@@ -898,9 +905,11 @@ function ChannelCard({ channel: c, sync, actions, expanded, onToggle, expandedCo
           <Typography.Text type="tertiary" size="small">
             更新于 {relativeTime(at)}
           </Typography.Text>
-          <Button theme="borderless" size="small" onClick={onToggle}>
-            {expanded ? "收起详情" : c.last_error ? "详情（有报错）" : "分组与详情"}
-          </Button>
+          {c.last_error || c.notes ? (
+            <Button theme="borderless" size="small" onClick={onToggle}>
+              {expanded ? "收起详情" : c.last_error ? "详情（有报错）" : "详情"}
+            </Button>
+          ) : null}
         </div>
         {expanded ? expandedContent : sync ? <SyncProgress state={sync} /> : null}
       </div>

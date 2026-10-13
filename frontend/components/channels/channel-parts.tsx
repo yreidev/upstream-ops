@@ -5,6 +5,7 @@ import { IconClose, IconForward, IconKey, IconPlus, IconTick } from "@douyinfe/s
 import type { BackgroundJob, Channel, ProgressEvent, RateSnapshot } from "@/lib/api-types"
 import { decimal, formatRatio, relativeTime } from "@/lib/format"
 import { useChannelRates } from "@/lib/queries"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 export type ChannelHealth = "healthy" | "low" | "failed" | "idle"
 
@@ -191,10 +192,12 @@ export function GroupKeyActions({ channel, rate, onAction }: { channel: Channel;
   )
 }
 
-/** 展开行 / 卡片里的分组倍率表。开了“只看已建密钥的分组”时只列有密钥的分组。 */
+/** 单个渠道的分组倍率表，在渠道行尾“分组”打开的抽屉里。开了“只看已建密钥的分组”时只列有密钥的分组。 */
 export function ChannelRatesTable({ channel, onAPIKeyAction }: { channel: Channel; onAPIKeyAction: APIKeyAction }) {
   const { data, loading, error } = useChannelRates(channel.id, channel.only_created_key_groups_enabled)
   const rates = [...(data ?? [])].sort((a, b) => a.ratio - b.ratio)
+  // 手机上抽屉只有屏幕那么宽，倍率和更新两列收窄，分组名才不会被挤成一个词一行
+  const isMobile = useIsMobile()
 
   const columns: ColumnProps<RateSnapshot>[] = [
     {
@@ -216,7 +219,7 @@ export function ChannelRatesTable({ channel, onAPIKeyAction }: { channel: Channe
     {
       title: "倍率",
       dataIndex: "ratio",
-      width: 100,
+      width: isMobile ? 76 : 100,
       render: (v: number) => (
         <Tag color={ratioColor(v)} className="num">
           {formatRatio(v)}
@@ -226,7 +229,7 @@ export function ChannelRatesTable({ channel, onAPIKeyAction }: { channel: Channe
     {
       title: "更新",
       dataIndex: "last_seen_at",
-      width: 110,
+      width: isMobile ? 84 : 110,
       render: (v: string) => <Typography.Text type="tertiary" size="small">{relativeTime(v)}</Typography.Text>,
     },
     {
