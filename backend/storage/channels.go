@@ -12,7 +12,15 @@ type Channels struct{ db *gorm.DB }
 
 func NewChannels(db *gorm.DB) *Channels { return &Channels{db: db} }
 
-func (r *Channels) Create(c *Channel) error { return r.db.Create(c).Error }
+func (r *Channels) Create(c *Channel) error {
+	monitor := c.MonitorEnabled
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(c).Error; err != nil {
+			return err
+		}
+		return restoreFalse(tx, c, "monitor_enabled", monitor, &c.MonitorEnabled)
+	})
+}
 func (r *Channels) Update(c *Channel) error { return r.db.Save(c).Error }
 func (r *Channels) Delete(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {

@@ -77,6 +77,7 @@ func TestRefreshRatesSyncAnnouncementsAndNotify(t *testing.T) {
 		Name:         "wecom",
 		Type:         storage.NotifyWecom,
 		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
+		Enabled:      true,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -181,6 +182,7 @@ func TestRefreshRatesSkipsAnnouncementsWhenIgnored(t *testing.T) {
 		Name:         "wecom",
 		Type:         storage.NotifyWecom,
 		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
+		Enabled:      true,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -268,6 +270,7 @@ func TestRefreshRatesEmitsRateAddedAndRemoved(t *testing.T) {
 		Name:         "wecom",
 		Type:         storage.NotifyWecom,
 		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
+		Enabled:      true,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -413,6 +416,7 @@ func TestRefreshRatesAfterChannelReuseDoesNotEmitOldStructureChange(t *testing.T
 		Name:         "wecom",
 		Type:         storage.NotifyWecom,
 		ConfigCipher: mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
+		Enabled:      true,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}
@@ -523,6 +527,7 @@ func TestRateEventSubscriptionFiltersGroups(t *testing.T) {
 		Type:          storage.NotifyWecom,
 		ConfigCipher:  mustEncrypt(t, cipher, `{"webhook_url":"`+webhookSrv.URL+`"}`),
 		Subscriptions: `[{"channel_id":1,"mode":"groups","groups":["beta"]}]`,
+		Enabled:       true,
 	}); err != nil {
 		t.Fatalf("create notify channel: %v", err)
 	}

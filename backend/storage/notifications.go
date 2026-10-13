@@ -36,7 +36,15 @@ func (r *Notifications) FindChannel(id uint) (*NotificationChannel, error) {
 	return &c, nil
 }
 
-func (r *Notifications) CreateChannel(c *NotificationChannel) error { return r.db.Create(c).Error }
+func (r *Notifications) CreateChannel(c *NotificationChannel) error {
+	enabled := c.Enabled
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(c).Error; err != nil {
+			return err
+		}
+		return restoreFalse(tx, c, "enabled", enabled, &c.Enabled)
+	})
+}
 func (r *Notifications) UpdateChannel(c *NotificationChannel) error { return r.db.Save(c).Error }
 func (r *Notifications) DeleteChannel(id uint) error {
 	return r.db.Delete(&NotificationChannel{}, id).Error

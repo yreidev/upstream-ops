@@ -43,6 +43,21 @@ func newGormLogger() logger.Interface {
 	)
 }
 
+// restoreFalse 把刚新建的一行里带 default:true 的布尔列改回调用方给的 false。
+//
+// GORM 新建时会把零值字段换成标签里的默认值并回写到结构体（false 变 true），
+// Select("*") 也绕不过，只能建完再改一次。want 为 true 时什么都不做。
+func restoreFalse(tx *gorm.DB, model any, column string, want bool, field *bool) error {
+	if want {
+		return nil
+	}
+	if err := tx.Model(model).UpdateColumn(column, false).Error; err != nil {
+		return err
+	}
+	*field = false
+	return nil
+}
+
 func Open(cfg DBConfig) (*gorm.DB, error) {
 	path := cfg.SQLitePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

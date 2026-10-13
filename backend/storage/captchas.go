@@ -26,7 +26,15 @@ func (r *Captchas) FindByID(id uint) (*CaptchaConfig, error) {
 	return &c, nil
 }
 
-func (r *Captchas) Create(c *CaptchaConfig) error { return r.db.Create(c).Error }
+func (r *Captchas) Create(c *CaptchaConfig) error {
+	enabled := c.Enabled
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(c).Error; err != nil {
+			return err
+		}
+		return restoreFalse(tx, c, "enabled", enabled, &c.Enabled)
+	})
+}
 func (r *Captchas) Update(c *CaptchaConfig) error { return r.db.Save(c).Error }
 func (r *Captchas) Delete(id uint) error          { return r.db.Delete(&CaptchaConfig{}, id).Error }
 

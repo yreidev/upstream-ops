@@ -42,16 +42,9 @@ func seedChannelListFixtures(t *testing.T) *Channels {
 		c := fixtures[i].ch
 		c.Type = ChannelTypeNewAPI
 		c.PasswordCipher = "x"
-		c.MonitorEnabled = true
+		c.MonitorEnabled = !fixtures[i].paused
 		if err := channels.Create(&c); err != nil {
 			t.Fatalf("create channel %s: %v", c.Name, err)
-		}
-		// monitor_enabled 带 default:true，Create 时 false 会被当成零值忽略，这里用 Save 落库。
-		if fixtures[i].paused {
-			c.MonitorEnabled = false
-			if err := channels.Update(&c); err != nil {
-				t.Fatalf("pause channel %s: %v", c.Name, err)
-			}
 		}
 	}
 	return channels
