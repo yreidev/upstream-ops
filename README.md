@@ -270,7 +270,7 @@ IMAGE_TAG=latest
 生产环境建议锁定具体版本，例如：
 
 ```env
-IMAGE_TAG=v0.7.1
+IMAGE_TAG=v0.8.0
 ```
 
 ## 环境变量
