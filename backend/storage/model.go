@@ -253,11 +253,6 @@ const (
 	EventMonitorFailed        NotificationEvent = "monitor_failed"
 	// EventRecovered 之前发过失败通知（登录、打码、采集）的渠道恢复正常。
 	EventRecovered NotificationEvent = "recovered"
-	// EventCCHSync 把上游分组倍率同步到 CCH 成本倍率：改了哪些供应商，或同步失败。
-	// 不属于某个上游渠道，消息的 ChannelID 为 0，订阅过滤只看事件。
-	EventCCHSync NotificationEvent = "cch_sync"
-	// EventDegrade GPT 降智检测确认了某把密钥降智或恢复。
-	EventDegrade NotificationEvent = "degrade"
 )
 
 // NotificationLog 通知发送记录。
@@ -328,23 +323,6 @@ type LoginBackoffState struct {
 
 func (LoginBackoffState) TableName() string { return "login_backoff_states" }
 
-// CCHSyncConfig 把上游分组倍率同步到 Claude Code Hub（CCH）供应商成本倍率的配置，全表只有一行。
-//
-// TokenCipher 是加密保存的 CCH 管理令牌（ADMIN_TOKEN）。布尔字段不设 default，
-// 否则 GORM 新建时会跳过 false、落成数据库默认值。
-type CCHSyncConfig struct {
-	ID          uint       `gorm:"primaryKey" json:"-"`
-	Enabled     bool       `gorm:"not null" json:"enabled"`
-	BaseURL     string     `gorm:"size:512;not null" json:"base_url"`
-	TokenCipher string     `gorm:"type:text;not null" json:"-"`
-	LastRunAt   *time.Time `json:"last_run_at,omitempty"`
-	LastSummary string     `gorm:"type:text" json:"last_summary,omitempty"`
-	LastError   string     `gorm:"type:text" json:"last_error,omitempty"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-}
-
-func (CCHSyncConfig) TableName() string { return "cch_sync_configs" }
-
 // AppliedMigration 记录已经执行过的一次性数据迁移，避免重复执行。
 type AppliedMigration struct {
 	Name      string    `gorm:"primaryKey;size:128"`
@@ -362,8 +340,6 @@ const (
 	MonitorJobBalance MonitorJob = "balance"
 	MonitorJobCosts   MonitorJob = "costs"
 	MonitorJobRates   MonitorJob = "rates"
-	// MonitorJobCCHSync 把分组倍率同步到 CCH，日志的 ChannelID 为 0。
-	MonitorJobCCHSync MonitorJob = "cch_sync"
 )
 
 // MonitorLog 每次扫描 / 登录尝试的结果，便于诊断失败。

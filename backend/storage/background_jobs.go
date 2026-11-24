@@ -15,10 +15,7 @@ const (
 	JobChannelSyncAll   JobKind = "channel_sync_all"   // 同步全部渠道的余额和消费
 	JobBalanceScan      JobKind = "balance_scan"       // 定时余额采集（含打码平台余额）
 	JobRateScan         JobKind = "rate_scan"          // 定时倍率采集
-	JobCCHSync          JobKind = "cch_sync"           // 把分组倍率同步到 CCH
 	JobRetention        JobKind = "retention"          // 定时清理过期历史
-	JobDegradeCheck     JobKind = "degrade_check"      // 降智检测：手动检测一把密钥
-	JobDegradeCheckAll  JobKind = "degrade_check_all"  // 降智检测：全部密钥，手动或定时巡检
 )
 
 // JobSource 任务是怎么触发的。

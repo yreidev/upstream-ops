@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Toast } from "@douyinfe/semi-ui"
+import { toast } from "@heroui/react"
 import { apiFetch } from "@/lib/api"
 import type { AppVersion } from "@/lib/api-types"
 import { useAppVersion } from "@/lib/queries"
@@ -34,14 +34,14 @@ export function useVersionCheck() {
       const result = await apiFetch<AppVersion>("/version")
       publish(result)
       if (result.update_error) {
-        Toast.error(result.update_error)
+        toast.danger(result.update_error)
       } else if (result.update_available && result.latest_version) {
         setNotesOpen(true)
       } else {
-        Toast.success("当前已是最新版本")
+        toast.success("当前已是最新版本")
       }
     } catch (err) {
-      Toast.error(err instanceof Error ? err.message : "检测更新失败")
+      toast.danger(err instanceof Error ? err.message : "检测更新失败")
     } finally {
       setChecking(false)
     }

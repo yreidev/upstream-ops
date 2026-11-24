@@ -1,21 +1,26 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import {
   Button,
-  Divider,
+  Description,
   Input,
+  Label,
+  ListBox,
   Modal,
   Popover,
-  Radio,
-  RadioGroup,
   Select,
+  Separator,
+  Spinner,
   Switch,
-  TagInput,
+  Tag,
+  TagGroup,
   TextArea,
-  Toast,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
-  Typography,
-} from "@douyinfe/semi-ui"
-import { IconHelpCircle } from "@douyinfe/semi-icons"
+  toast,
+} from "@heroui/react"
+import { CircleQuestion } from "@gravity-ui/icons"
 import type { Channel, ChannelType, CredentialMode, RechargeMultiplierMode } from "@/lib/api-types"
 import { apiFetch } from "@/lib/api"
 import { channelTagKey } from "@/lib/channel-tags"
@@ -24,6 +29,7 @@ import { useCaptchaConfigs } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
 import { SyncProgress, emptySyncState, syncStateOf, type ChannelSyncState } from "@/components/channels/channel-parts"
 import { FormError } from "@/components/common/form-error"
+import { PasswordInput } from "@/components/common/password-input"
 
 /**
  * FormState 是表单的所有可编辑字段。
@@ -150,31 +156,13 @@ function buildTokenCredential(form: FormState): string {
   })
 }
 
-function Field({ label, extra, hint, children }: {
-  label: ReactNode
-  extra?: ReactNode
-  hint?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <div className="stack" style={{ gap: 4 }}>
-      <div className="row-between">
-        <Typography.Text strong size="small">
-          {label}
-        </Typography.Text>
-        {extra}
-      </div>
-      {children}
-      {hint ? (
-        <Typography.Text type="tertiary" size="small">
-          {hint}
-        </Typography.Text>
-      ) : null}
-    </div>
-  )
-}
-
-function SwitchRow({ title, description, checked, onChange, disabled }: {
+function SwitchRow({
+  title,
+  description,
+  checked,
+  onChange,
+  disabled,
+}: {
   title: string
   description: string
   checked: boolean
@@ -182,22 +170,116 @@ function SwitchRow({ title, description, checked, onChange, disabled }: {
   disabled?: boolean
 }) {
   return (
-    <div className="row-between" style={{ alignItems: "flex-start", gap: 16 }}>
-      <div className="stack" style={{ gap: 0 }}>
-        <Typography.Text>{title}</Typography.Text>
-        <Typography.Text type="tertiary" size="small">
-          {description}
-        </Typography.Text>
-      </div>
-      <Switch checked={checked} onChange={onChange} disabled={disabled} style={{ flexShrink: 0 }} />
+    <Switch
+      isSelected={checked}
+      onChange={onChange}
+      isDisabled={disabled}
+      className="w-full"
+    >
+      <Switch.Content className="w-full justify-between">
+        <div className="stack gap-0.5">
+          <Label className="text-sm font-medium text-foreground">{title}</Label>
+          <Description className="text-xs text-muted">{description}</Description>
+        </div>
+        <Switch.Control>
+          <Switch.Thumb />
+        </Switch.Control>
+      </Switch.Content>
+    </Switch>
+  )
+}
+
+function TagsEditor({
+  tags,
+  inputValue,
+  onChange,
+  onInputChange,
+  disabled,
+  invalid,
+}: {
+  tags: string[]
+  inputValue: string
+  onChange: (next: string[]) => void
+  onInputChange: (next: string) => void
+  disabled?: boolean
+  invalid?: boolean
+}) {
+  function commit(raw: string) {
+    if (!raw.trim()) {
+      onInputChange("")
+      return
+    }
+    onChange(normalizeTags([...tags, raw]))
+    onInputChange("")
+  }
+
+  return (
+    <div className="stack gap-2">
+      <TextField
+        variant="secondary"
+        fullWidth
+        isDisabled={disabled}
+        isInvalid={invalid}
+        value={inputValue}
+        onChange={(val) => {
+          if (/[,，]/.test(val)) commit(val)
+          else onInputChange(val)
+        }}
+      >
+        <Label>标签（可选）</Label>
+        <Input
+          placeholder="输入后按回车或逗号添加"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              commit(inputValue)
+            } else if (e.key === "Backspace" && !inputValue && tags.length > 0) {
+              onChange(tags.slice(0, -1))
+            }
+          }}
+          onBlur={() => commit(inputValue)}
+        />
+        <Description>
+          回车或逗号确认，最多 {MAX_TAGS} 个，每个不超过 {MAX_TAG_LENGTH} 个字符
+        </Description>
+      </TextField>
+
+      {tags.length > 0 ? (
+        <TagGroup
+          aria-label="已添加的标签"
+          size="sm"
+          onRemove={
+            disabled
+              ? undefined
+              : (keys) => {
+                  onChange(tags.filter((t) => !keys.has(t)))
+                }
+          }
+        >
+          <TagGroup.List>
+            {tags.map((tag) => (
+              <Tag
+                key={tag}
+                id={tag}
+                textValue={tag}
+                className={charLength(tag) > MAX_TAG_LENGTH ? "text-danger" : undefined}
+              >
+                {tag}
+              </Tag>
+            ))}
+          </TagGroup.List>
+        </TagGroup>
+      ) : null}
     </div>
   )
 }
 
-const monoStyle = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: 12 }
-
 /** 新增或编辑渠道。channel 为空时是新增。 */
-export function ChannelFormModal({ visible, onClose, channel }: {
+export function ChannelFormModal({
+  visible,
+  onClose,
+  channel,
+}: {
   visible: boolean
   onClose: () => void
   channel?: Channel | null
@@ -390,7 +472,7 @@ export function ChannelFormModal({ visible, onClose, channel }: {
     setBaseline(next)
     // 存了新凭据，上一次的测试结果就不作数了
     setTest(null)
-    Toast.success("已保存")
+    toast.success("已保存")
   }
 
   /** 用库里存的凭据测试登录；失败了改完凭据再保存、再测。 */
@@ -400,7 +482,7 @@ export function ChannelFormModal({ visible, onClose, channel }: {
     setTest({ ...emptySyncState(), running: true })
     try {
       const { job, started } = await startJob(`/channels/${target.id}/test-login`)
-      if (!started) Toast.info(`${target.name} 已有任务在跑（${job.title}），显示它的进度`)
+      if (!started) toast.info(`${target.name} 已有任务在跑（${job.title}），显示它的进度`)
       await watchJob(job.id, (j) => setTest(syncStateOf(j)), signal)
       refresh()
     } catch (e) {
@@ -417,320 +499,494 @@ export function ChannelFormModal({ visible, onClose, channel }: {
   const enabledCaptchas = (captchas.data ?? []).filter((c) => c.enabled)
 
   return (
-    <Modal
-      visible={visible}
-      title={isEdit ? "编辑渠道" : "新增渠道"}
-      onCancel={onClose}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={submitting}>
-            {saved && !dirty ? "关闭" : "取消"}
-          </Button>
-          {testBlocked && !testing ? (
-            <Tooltip content={testBlocked}>
-              <Button disabled>测试登录</Button>
-            </Tooltip>
-          ) : (
-            <Button onClick={() => void handleTest()} loading={testing} disabled={submitting}>
-              测试登录
-            </Button>
-          )}
-          <Button theme="solid" onClick={() => void handleSave()} loading={submitting} disabled={testing}>
-            保存
-          </Button>
-        </>
-      }
-      width={640}
-      bodyStyle={{ maxHeight: "72vh", overflowY: "auto" }}
+    <Modal.Backdrop
+      isOpen={visible}
+      isDismissable={!submitting && !dirty}
+      isKeyboardDismissDisabled={submitting}
+      onOpenChange={(open) => !open && !submitting && onClose()}
     >
-      <div className="stack" style={{ gap: 14 }}>
-        <Typography.Text type="tertiary" size="small">
-          {isEdit
-            ? "保存后会清空已缓存的登录会话，弹窗不关。改了登录凭据先点“保存”，再点“测试登录”，结果显示在最下面。"
-            : "添加上游账号，开启监控后按计划自动登录采集。保存后弹窗不关，可以点“测试登录”确认凭据能不能用。"}
-        </Typography.Text>
+      <Modal.Container size="lg" scroll="inside" className="w-[min(640px,calc(100vw-24px))] max-w-none">
+        <Modal.Dialog className="w-full max-w-none">
+          <Modal.CloseTrigger isDisabled={submitting} />
+          <Modal.Header>
+            <Modal.Heading>{isEdit ? "编辑渠道" : "新增渠道"}</Modal.Heading>
+          </Modal.Header>
+          <Modal.Body className="max-h-[72vh] overflow-y-auto">
+            <div className="stack gap-3.5">
+              <p className="m-0 text-xs text-muted">
+                {isEdit
+                  ? "保存后会清空已缓存的登录会话，弹窗不关。改了登录凭据先点“保存”，再点“测试登录”，结果显示在最下面。"
+                  : "添加上游账号，开启监控后按计划自动登录采集。保存后弹窗不关，可以点“测试登录”确认凭据能不能用。"}
+              </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 120px", gap: 12 }}>
-          <Field label="渠道名">
-            <Input value={form.name} onChange={(v) => patch({ name: v })} disabled={submitting} />
-          </Field>
-          <Field label="排序">
-            <Input type="number" value={form.sort_order} onChange={(v) => patch({ sort_order: v })} disabled={submitting} />
-          </Field>
-        </div>
-
-        <Field label="类型" hint={isEdit ? "类型创建后不可修改" : undefined}>
-          <Select
-            value={form.type}
-            onChange={(v) => patch({ type: v as ChannelType })}
-            disabled={isEdit || submitting}
-            style={{ width: "100%" }}
-            optionList={[
-              { value: "sub2api", label: "Sub2API" },
-              { value: "newapi", label: "NewAPI" },
-            ]}
-          />
-        </Field>
-
-        <Field label="站点地址">
-          <Input placeholder="https://example.com" value={form.site_url} onChange={(v) => patch({ site_url: v })} disabled={submitting} />
-        </Field>
-
-        <Field label="标签（可选）" hint={`回车或逗号确认，最多 ${MAX_TAGS} 个，每个不超过 ${MAX_TAG_LENGTH} 个字符`}>
-          <TagInput
-            value={form.tags}
-            inputValue={form.tag_input}
-            onChange={(v) => patch({ tags: normalizeTags(v) })}
-            onInputChange={(v) => patch({ tag_input: v })}
-            separator={[",", "，"]}
-            addOnBlur
-            placeholder={form.tags.length === 0 ? "输入后按回车添加" : ""}
-            disabled={submitting}
-            validateStatus={form.tags.some((t) => charLength(t) > MAX_TAG_LENGTH) ? "error" : "default"}
-          />
-        </Field>
-
-        <Field
-          label="备注（可选）"
-          hint={
-            notesLength > MAX_NOTES_LENGTH * 0.9 ? (
-              <Typography.Text type={notesLength > MAX_NOTES_LENGTH ? "danger" : "tertiary"} size="small">
-                {notesLength} / {MAX_NOTES_LENGTH}
-              </Typography.Text>
-            ) : undefined
-          }
-        >
-          <TextArea
-            placeholder="如：主力渠道，晚高峰较慢"
-            value={form.notes}
-            onChange={(v) => patch({ notes: v })}
-            autosize={{ minRows: 2, maxRows: 6 }}
-            disabled={submitting}
-          />
-        </Field>
-
-        <Divider margin={4} />
-
-        <Field
-          label="凭据类型"
-          hint={
-            isTokenMode
-              ? "粘贴浏览器里已登录的 Token / Cookie，失效后要手动重新粘贴。"
-              : "填账号密码，系统自动登录并续期；站点有人机验证时需要配打码平台。"
-          }
-        >
-          <RadioGroup
-            type="button"
-            value={form.credential_mode}
-            onChange={(e) => patch({ credential_mode: e.target.value as CredentialMode })}
-            disabled={submitting}
-          >
-            <Radio value="password">账号密码</Radio>
-            <Radio value="token">Token（跳过登录）</Radio>
-          </RadioGroup>
-        </Field>
-
-        {!isTokenMode ? (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-              <Field label="账号 / 邮箱">
-                <Input value={form.username} onChange={(v) => patch({ username: v })} disabled={submitting} />
-              </Field>
-              <Field label={isEdit ? "新密码（留空不变）" : "密码"}>
-                <Input mode="password" value={form.password} onChange={(v) => patch({ password: v })} disabled={submitting} />
-              </Field>
-            </div>
-            <Field label="附加表单参数" hint="非标准 Sub2API / NewAPI 魔改版登录时额外要的字段。">
-              <TextArea
-                placeholder='{"device_id":"xxx"}'
-                value={form.login_extra_params}
-                onChange={(v) => patch({ login_extra_params: v })}
-                autosize={{ minRows: 2, maxRows: 6 }}
-                style={monoStyle}
-                disabled={submitting}
-              />
-            </Field>
-          </>
-        ) : (
-          <>
-            <Field label="账号 / 邮箱（可选）" hint="只用来显示，不参与鉴权">
-              <Input placeholder="如：someone@example.com" value={form.username} onChange={(v) => patch({ username: v })} disabled={submitting} />
-            </Field>
-
-            {form.type === "newapi" ? (
-              <>
-                <Field
-                  label="鉴权方式"
-                  hint={
-                    form.newapi_token_kind === "access_token"
-                      ? "NewAPI 个人设置页生成的“系统访问令牌”（user.access_token），请求时放在 Authorization 头里。"
-                      : "浏览器登录后的整段 Cookie，一般形如 session=MTc4...; ..."
-                  }
+              <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3">
+                <TextField
+                  variant="secondary"
+                  fullWidth
+                  value={form.name}
+                  onChange={(name) => patch({ name })}
+                  isDisabled={submitting}
+                  isRequired
                 >
-                  <RadioGroup
-                    type="button"
-                    value={form.newapi_token_kind}
-                    onChange={(e) => patch({ newapi_token_kind: e.target.value as FormState["newapi_token_kind"] })}
-                    disabled={submitting}
+                  <Label>渠道名</Label>
+                  <Input />
+                </TextField>
+                <TextField
+                  variant="secondary"
+                  fullWidth
+                  value={form.sort_order}
+                  onChange={(sort_order) => patch({ sort_order })}
+                  isDisabled={submitting}
+                >
+                  <Label>排序</Label>
+                  <Input type="number" />
+                </TextField>
+              </div>
+
+              <Select
+                variant="secondary"
+                fullWidth
+                value={form.type}
+                onChange={(k) => k != null && patch({ type: String(k) as ChannelType })}
+                isDisabled={isEdit || submitting}
+              >
+                <Label>类型</Label>
+                <Select.Trigger>
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                {isEdit ? <Description>类型创建后不可修改</Description> : null}
+                <Select.Popover>
+                  <ListBox>
+                    <ListBox.Item id="sub2api" textValue="Sub2API">
+                      Sub2API
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                    <ListBox.Item id="newapi" textValue="NewAPI">
+                      NewAPI
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+
+              <TextField
+                variant="secondary"
+                fullWidth
+                value={form.site_url}
+                onChange={(site_url) => patch({ site_url })}
+                isDisabled={submitting}
+                isRequired
+              >
+                <Label>站点地址</Label>
+                <Input placeholder="https://example.com" />
+              </TextField>
+
+              <TagsEditor
+                tags={form.tags}
+                inputValue={form.tag_input}
+                onChange={(tags) => patch({ tags })}
+                onInputChange={(tag_input) => patch({ tag_input })}
+                disabled={submitting}
+                invalid={form.tags.some((t) => charLength(t) > MAX_TAG_LENGTH)}
+              />
+
+              <TextField
+                variant="secondary"
+                fullWidth
+                value={form.notes}
+                onChange={(notes) => patch({ notes })}
+                isDisabled={submitting}
+                isInvalid={notesLength > MAX_NOTES_LENGTH}
+              >
+                <Label>备注（可选）</Label>
+                <TextArea placeholder="如：主力渠道，晚高峰较慢" rows={2} />
+                {notesLength > MAX_NOTES_LENGTH * 0.9 ? (
+                  <Description className={notesLength > MAX_NOTES_LENGTH ? "text-danger" : undefined}>
+                    {notesLength} / {MAX_NOTES_LENGTH}
+                  </Description>
+                ) : null}
+              </TextField>
+
+              <Separator className="my-1" />
+
+              <div className="stack gap-1.5">
+                <Label className="text-xs font-medium text-foreground">凭据类型</Label>
+                <ToggleButtonGroup
+                  aria-label="凭据类型"
+                  selectionMode="single"
+                  disallowEmptySelection
+                  selectedKeys={new Set([form.credential_mode])}
+                  onSelectionChange={(keys) => {
+                    const first = [...keys][0]
+                    if (first != null) patch({ credential_mode: String(first) as CredentialMode })
+                  }}
+                  isDisabled={submitting}
+                  size="sm"
+                >
+                  <ToggleButton id="password">账号密码</ToggleButton>
+                  <ToggleButton id="token">Token（跳过登录）</ToggleButton>
+                </ToggleButtonGroup>
+                <span className="text-xs text-muted">
+                  {isTokenMode
+                    ? "粘贴浏览器里已登录的 Token / Cookie，失效后要手动重新粘贴。"
+                    : "填账号密码，系统自动登录并续期；站点有人机验证时需要配打码平台。"}
+                </span>
+              </div>
+
+              {!isTokenMode ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <TextField
+                      variant="secondary"
+                      fullWidth
+                      value={form.username}
+                      onChange={(username) => patch({ username })}
+                      isDisabled={submitting}
+                    >
+                      <Label>账号 / 邮箱</Label>
+                      <Input />
+                    </TextField>
+                    <TextField
+                      variant="secondary"
+                      fullWidth
+                      value={form.password}
+                      onChange={(password) => patch({ password })}
+                      isDisabled={submitting}
+                    >
+                      <Label>{isEdit ? "新密码（留空不变）" : "密码"}</Label>
+                      <PasswordInput variant="secondary" fullWidth />
+                    </TextField>
+                  </div>
+                  <TextField
+                    variant="secondary"
+                    fullWidth
+                    value={form.login_extra_params}
+                    onChange={(login_extra_params) => patch({ login_extra_params })}
+                    isDisabled={submitting}
                   >
-                    <Radio value="cookie">Cookie（session）</Radio>
-                    <Radio value="access_token">系统访问令牌</Radio>
-                  </RadioGroup>
-                </Field>
-                {form.newapi_token_kind === "cookie" ? (
-                  <Field label="Cookie" extra={<NewAPITokenHelp kind="cookie" />}>
-                    <TextArea
-                      placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴整段 Cookie，例：session=...; ..."}
-                      value={form.newapi_cookie}
-                      onChange={(v) => patch({ newapi_cookie: v })}
-                      rows={3}
-                      style={monoStyle}
-                      disabled={submitting}
-                    />
-                  </Field>
-                ) : (
-                  <Field label="系统访问令牌" extra={<NewAPITokenHelp kind="access_token" />}>
-                    <TextArea
-                      placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴 NewAPI 生成的 32 位系统访问令牌"}
-                      value={form.newapi_access_token}
-                      onChange={(v) => patch({ newapi_access_token: v })}
-                      rows={3}
-                      style={monoStyle}
-                      disabled={submitting}
-                    />
-                  </Field>
-                )}
-                <Field label="User ID">
-                  <Input
-                    placeholder={isEdit ? "留空不修改；NewAPI 个人设置页可见" : "整数，NewAPI 个人设置页可见"}
-                    value={form.newapi_user_id}
-                    onChange={(v) => patch({ newapi_user_id: v })}
-                    disabled={submitting}
-                  />
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="Access Token" extra={<Sub2APITokenHelp />}>
-                  <TextArea
-                    placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴 access_token"}
-                    value={form.sub2api_access_token}
-                    onChange={(v) => patch({ sub2api_access_token: v })}
-                    rows={3}
-                    style={monoStyle}
-                    disabled={submitting}
-                  />
-                </Field>
-                <Field label="Refresh Token">
-                  <TextArea
-                    placeholder={isEdit ? "留空不修改；填写时要同时填 Access Token" : "粘贴 refresh_token（建议填，用来续期）"}
-                    value={form.sub2api_refresh_token}
-                    onChange={(v) => patch({ sub2api_refresh_token: v })}
-                    rows={3}
-                    style={monoStyle}
-                    disabled={submitting}
-                  />
-                </Field>
-              </>
-            )}
-          </>
-        )}
+                    <Label>附加表单参数</Label>
+                    <TextArea placeholder='{"device_id":"xxx"}' rows={2} className="mono text-xs" />
+                    <Description>非标准 Sub2API / NewAPI 魔改版登录时额外要的字段。</Description>
+                  </TextField>
+                </>
+              ) : (
+                <>
+                  <TextField
+                    variant="secondary"
+                    fullWidth
+                    value={form.username}
+                    onChange={(username) => patch({ username })}
+                    isDisabled={submitting}
+                  >
+                    <Label>账号 / 邮箱（可选）</Label>
+                    <Input placeholder="如：someone@example.com" />
+                    <Description>只用来显示，不参与鉴权</Description>
+                  </TextField>
 
-        <Divider margin={4} />
+                  {form.type === "newapi" ? (
+                    <>
+                      <div className="stack gap-1.5">
+                        <Label className="text-xs font-medium text-foreground">鉴权方式</Label>
+                        <ToggleButtonGroup
+                          aria-label="鉴权方式"
+                          selectionMode="single"
+                          disallowEmptySelection
+                          selectedKeys={new Set([form.newapi_token_kind])}
+                          onSelectionChange={(keys) => {
+                            const first = [...keys][0]
+                            if (first != null) patch({ newapi_token_kind: String(first) as FormState["newapi_token_kind"] })
+                          }}
+                          isDisabled={submitting}
+                          size="sm"
+                        >
+                          <ToggleButton id="cookie">Cookie（session）</ToggleButton>
+                          <ToggleButton id="access_token">系统访问令牌</ToggleButton>
+                        </ToggleButtonGroup>
+                        <span className="text-xs text-muted">
+                          {form.newapi_token_kind === "access_token"
+                            ? "NewAPI 个人设置页生成的“系统访问令牌”（user.access_token），请求时放在 Authorization 头里。"
+                            : "浏览器登录后的整段 Cookie，一般形如 session=MTc4...; ..."}
+                        </span>
+                      </div>
 
-        <Field label="余额阈值" hint="余额低于这个值时告警，0 表示不告警。">
-          <Input type="number" step={0.01} min={0} value={form.balance_threshold} onChange={(v) => patch({ balance_threshold: v })} disabled={submitting} />
-        </Field>
+                      {form.newapi_token_kind === "cookie" ? (
+                        <TextField
+                          variant="secondary"
+                          fullWidth
+                          value={form.newapi_cookie}
+                          onChange={(newapi_cookie) => patch({ newapi_cookie })}
+                          isDisabled={submitting}
+                        >
+                          <div className="row-between">
+                            <Label>Cookie</Label>
+                            <NewAPITokenHelp kind="cookie" />
+                          </div>
+                          <TextArea
+                            placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴整段 Cookie，例：session=...; ..."}
+                            rows={3}
+                            className="mono text-xs"
+                          />
+                        </TextField>
+                      ) : (
+                        <TextField
+                          variant="secondary"
+                          fullWidth
+                          value={form.newapi_access_token}
+                          onChange={(newapi_access_token) => patch({ newapi_access_token })}
+                          isDisabled={submitting}
+                        >
+                          <div className="row-between">
+                            <Label>系统访问令牌</Label>
+                            <NewAPITokenHelp kind="access_token" />
+                          </div>
+                          <TextArea
+                            placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴 NewAPI 生成的 32 位系统访问令牌"}
+                            rows={3}
+                            className="mono text-xs"
+                          />
+                        </TextField>
+                      )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-          <Field label="充值倍率" hint="留空跟随上游。">
-            <Input type="number" step={0.0001} min={0} value={form.recharge_multiplier} onChange={(v) => patch({ recharge_multiplier: v })} disabled={submitting} />
-          </Field>
-          <Field label="换算方式">
-            <Select
-              value={form.recharge_multiplier_mode}
-              onChange={(v) => patch({ recharge_multiplier_mode: v as RechargeMultiplierMode })}
-              disabled={submitting}
-              style={{ width: "100%" }}
-              optionList={[
-                { value: "divide", label: "余额 / 倍率" },
-                { value: "multiply", label: "余额 × 倍率" },
-              ]}
-            />
-          </Field>
-        </div>
+                      <TextField
+                        variant="secondary"
+                        fullWidth
+                        value={form.newapi_user_id}
+                        onChange={(newapi_user_id) => patch({ newapi_user_id })}
+                        isDisabled={submitting}
+                      >
+                        <Label>User ID</Label>
+                        <Input placeholder={isEdit ? "留空不修改；NewAPI 个人设置页可见" : "整数，NewAPI 个人设置页可见"} />
+                      </TextField>
+                    </>
+                  ) : (
+                    <>
+                      <TextField
+                        variant="secondary"
+                        fullWidth
+                        value={form.sub2api_access_token}
+                        onChange={(sub2api_access_token) => patch({ sub2api_access_token })}
+                        isDisabled={submitting}
+                      >
+                        <div className="row-between">
+                          <Label>Access Token</Label>
+                          <Sub2APITokenHelp />
+                        </div>
+                        <TextArea
+                          placeholder={isEdit ? "留空不修改；填写则覆盖原来的" : "粘贴 access_token"}
+                          rows={3}
+                          className="mono text-xs"
+                        />
+                      </TextField>
 
-        <SwitchRow
-          title="启用监控"
-          description="关闭后调度器不会采集这个渠道。"
-          checked={form.monitor_enabled}
-          onChange={(v) => patch({ monitor_enabled: v })}
-          disabled={submitting}
-        />
-        <SwitchRow
-          title="只看已建密钥的分组"
-          description="开启后渠道列表、全部分组和倍率变化通知只关注已经建了密钥的分组；通知设置里仍能看到全部分组。"
-          checked={form.only_created_key_groups_enabled}
-          onChange={(v) => patch({ only_created_key_groups_enabled: v })}
-          disabled={submitting}
-        />
-        <SwitchRow
-          title="忽略公告"
-          description="开启后不拉取这个渠道的公告。"
-          checked={form.ignore_announcements}
-          onChange={(v) => patch({ ignore_announcements: v })}
-          disabled={submitting}
-        />
+                      <TextField
+                        variant="secondary"
+                        fullWidth
+                        value={form.sub2api_refresh_token}
+                        onChange={(sub2api_refresh_token) => patch({ sub2api_refresh_token })}
+                        isDisabled={submitting}
+                      >
+                        <Label>Refresh Token</Label>
+                        <TextArea
+                          placeholder={isEdit ? "留空不修改；填写时要同时填 Access Token" : "粘贴 refresh_token（建议填，用来续期）"}
+                          rows={3}
+                          className="mono text-xs"
+                        />
+                      </TextField>
+                    </>
+                  )}
+                </>
+              )}
 
-        {!isTokenMode ? (
-          <>
-            <SwitchRow
-              title="Turnstile 人机验证"
-              description="站点开了 Cloudflare Turnstile 时打开。"
-              checked={form.turnstile_enabled}
-              onChange={(v) => patch({ turnstile_enabled: v })}
-              disabled={submitting}
-            />
-            {form.turnstile_enabled ? (
-              <Field label="打码平台" hint="siteKey 会自动从上游公开接口获取，不用填。">
+              <Separator className="my-1" />
+
+              <TextField
+                variant="secondary"
+                fullWidth
+                value={form.balance_threshold}
+                onChange={(balance_threshold) => patch({ balance_threshold })}
+                isDisabled={submitting}
+              >
+                <Label>余额阈值</Label>
+                <Input type="number" step={0.01} min={0} />
+                <Description>余额低于这个值时告警，0 表示不告警。</Description>
+              </TextField>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <TextField
+                  variant="secondary"
+                  fullWidth
+                  value={form.recharge_multiplier}
+                  onChange={(recharge_multiplier) => patch({ recharge_multiplier })}
+                  isDisabled={submitting}
+                >
+                  <Label>充值倍率</Label>
+                  <Input type="number" step={0.0001} min={0} />
+                  <Description>留空跟随上游。</Description>
+                </TextField>
                 <Select
-                  value={form.captcha_config_id}
-                  onChange={(v) => patch({ captcha_config_id: v as number })}
+                  variant="secondary"
+                  fullWidth
+                  value={form.recharge_multiplier_mode}
+                  onChange={(k) => k != null && patch({ recharge_multiplier_mode: String(k) as RechargeMultiplierMode })}
+                  isDisabled={submitting}
+                >
+                  <Label>换算方式</Label>
+                  <Select.Trigger>
+                    <Select.Value />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      <ListBox.Item id="divide" textValue="余额 / 倍率">
+                        余额 / 倍率
+                        <ListBox.ItemIndicator />
+                      </ListBox.Item>
+                      <ListBox.Item id="multiply" textValue="余额 × 倍率">
+                        余额 × 倍率
+                        <ListBox.ItemIndicator />
+                      </ListBox.Item>
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
+              </div>
+
+              <div className="stack gap-3 pt-1">
+                <SwitchRow
+                  title="启用监控"
+                  description="关闭后调度器不会采集这个渠道。"
+                  checked={form.monitor_enabled}
+                  onChange={(v) => patch({ monitor_enabled: v })}
                   disabled={submitting}
-                  style={{ width: "100%" }}
-                  placeholder={enabledCaptchas.length > 0 ? "选择打码平台" : "先到“打码平台”页新增一个"}
-                  optionList={enabledCaptchas.map((c) => ({ value: c.id, label: c.name }))}
-                  emptyContent="没有已启用的打码平台"
                 />
-              </Field>
-            ) : null}
-          </>
-        ) : null}
+                <SwitchRow
+                  title="只看已建密钥的分组"
+                  description="开启后渠道列表、全部分组和倍率变化通知只关注已经建了密钥的分组；通知设置里仍能看到全部分组。"
+                  checked={form.only_created_key_groups_enabled}
+                  onChange={(v) => patch({ only_created_key_groups_enabled: v })}
+                  disabled={submitting}
+                />
+                <SwitchRow
+                  title="忽略公告"
+                  description="开启后不拉取这个渠道的公告。"
+                  checked={form.ignore_announcements}
+                  onChange={(v) => patch({ ignore_announcements: v })}
+                  disabled={submitting}
+                />
 
-        {test ? (
-          <div ref={progressRef} className="stack" style={{ gap: 6 }}>
-            <Typography.Text strong>测试登录</Typography.Text>
-            <SyncProgress state={test} />
-          </div>
-        ) : null}
+                {!isTokenMode ? (
+                  <>
+                    <SwitchRow
+                      title="Turnstile 人机验证"
+                      description="站点开了 Cloudflare Turnstile 时打开。"
+                      checked={form.turnstile_enabled}
+                      onChange={(v) => patch({ turnstile_enabled: v })}
+                      disabled={submitting}
+                    />
+                    {form.turnstile_enabled ? (
+                      <Select
+                        variant="secondary"
+                        fullWidth
+                        placeholder={enabledCaptchas.length > 0 ? "选择打码平台" : "先到“打码平台”页新增一个"}
+                        value={form.captcha_config_id != null ? String(form.captcha_config_id) : null}
+                        onChange={(k) => patch({ captcha_config_id: k == null || k === "" ? undefined : Number(k) })}
+                        isDisabled={submitting}
+                      >
+                        <Label>打码平台</Label>
+                        <Select.Trigger>
+                          <Select.Value />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                        <Description>siteKey 会自动从上游公开接口获取，不用填。</Description>
+                        <Select.Popover>
+                          <ListBox
+                            renderEmptyState={() => (
+                              <div className="px-3 py-2 text-xs text-muted">没有已启用的打码平台</div>
+                            )}
+                          >
+                            {enabledCaptchas.map((c) => (
+                              <ListBox.Item key={c.id} id={String(c.id)} textValue={c.name}>
+                                <Label>{c.name}</Label>
+                                <ListBox.ItemIndicator />
+                              </ListBox.Item>
+                            ))}
+                          </ListBox>
+                        </Select.Popover>
+                      </Select>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
 
-        <FormError message={error} />
-      </div>
-    </Modal>
+              {test ? (
+                <div ref={progressRef} className="stack gap-1.5">
+                  <span className="text-xs font-semibold text-foreground">测试登录</span>
+                  <SyncProgress state={test} />
+                </div>
+              ) : null}
+
+              <FormError message={error} />
+            </div>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="tertiary" isDisabled={submitting} onPress={onClose}>
+              {saved && !dirty ? "关闭" : "取消"}
+            </Button>
+            {testBlocked && !testing ? (
+              <Tooltip>
+                <Tooltip.Trigger
+                  aria-disabled="true"
+                  className="button button--secondary button--md cursor-not-allowed opacity-50"
+                >
+                  测试登录
+                </Tooltip.Trigger>
+                <Tooltip.Content>{testBlocked}</Tooltip.Content>
+              </Tooltip>
+            ) : (
+              <Button
+                variant="secondary"
+                isPending={testing}
+                isDisabled={submitting}
+                onPress={() => void handleTest()}
+              >
+                {testing ? <Spinner size="sm" color="current" /> : null}
+                测试登录
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              isPending={submitting}
+              isDisabled={testing}
+              onPress={() => void handleSave()}
+            >
+              {submitting ? <Spinner size="sm" color="current" /> : null}
+              保存
+            </Button>
+          </Modal.Footer>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   )
 }
 
 function HelpLink({ content }: { content: ReactNode }) {
   return (
-    <Popover content={<div style={{ padding: 12, maxWidth: 360, fontSize: 12, lineHeight: 1.7 }}>{content}</div>} trigger="click" position="bottomRight" showArrow>
-      <Typography.Text link size="small" icon={<IconHelpCircle />} style={{ cursor: "pointer" }}>
+    <Popover>
+      <Button variant="ghost" size="sm" className="h-auto gap-1 px-1.5 py-0.5 text-xs text-accent">
+        <CircleQuestion className="size-3.5" />
         如何获取？
-      </Typography.Text>
+      </Button>
+      <Popover.Content placement="bottom end" className="max-w-[360px]">
+        <Popover.Arrow />
+        <Popover.Dialog className="text-xs leading-relaxed text-foreground">{content}</Popover.Dialog>
+      </Popover.Content>
     </Popover>
   )
 }
 
-const code = (s: string) => <Typography.Text code>{s}</Typography.Text>
+const code = (s: string) => (
+  <code className="mono rounded bg-default px-1 py-0.5 text-[11px] text-foreground">{s}</code>
+)
 
 function NewAPITokenHelp({ kind }: { kind: "cookie" | "access_token" }) {
   return (
@@ -739,8 +995,8 @@ function NewAPITokenHelp({ kind }: { kind: "cookie" | "access_token" }) {
         <>
           {kind === "access_token" ? (
             <>
-              <Typography.Text strong>获取系统访问令牌</Typography.Text>
-              <ol style={{ margin: "4px 0", paddingLeft: 18 }}>
+              <div className="font-semibold">获取系统访问令牌</div>
+              <ol className="my-1 list-decimal pl-4">
                 <li>在浏览器登录 NewAPI 站点，进“个人设置”页</li>
                 <li>找到“生成的系统访问令牌”一栏</li>
                 <li>点生成并复制这串 32 位令牌（即 user.access_token）</li>
@@ -749,8 +1005,8 @@ function NewAPITokenHelp({ kind }: { kind: "cookie" | "access_token" }) {
             </>
           ) : (
             <>
-              <Typography.Text strong>获取 Cookie</Typography.Text>
-              <ol style={{ margin: "4px 0", paddingLeft: 18 }}>
+              <div className="font-semibold">获取 Cookie</div>
+              <ol className="my-1 list-decimal pl-4">
                 <li>在浏览器登录 NewAPI 站点，按 F12 打开开发者工具，切到 Network（网络）</li>
                 <li>刷新页面，点列表里任意一个 {code("/api/")} 开头的请求，如 {code("self")}</li>
                 <li>在 Request Headers（请求标头）里找到 {code("Cookie")}，复制冒号后面的整段，形如 {code("session=xxxxx; ...")}</li>
@@ -758,9 +1014,7 @@ function NewAPITokenHelp({ kind }: { kind: "cookie" | "access_token" }) {
               <div>只粘 {code("session")} 的值、漏了前面的 {code("session=")}，上游会当成未登录。</div>
             </>
           )}
-          <Typography.Text strong style={{ display: "block", marginTop: 8 }}>
-            获取 User ID
-          </Typography.Text>
+          <div className="mt-2 font-semibold">获取 User ID</div>
           <div>登录 NewAPI 后在“个人设置”页查看用户 ID，或到 Application → Local Storage 里复制 {code("uid")}。</div>
         </>
       }
@@ -773,8 +1027,8 @@ function Sub2APITokenHelp() {
     <HelpLink
       content={
         <>
-          <Typography.Text strong>获取 Access Token / Refresh Token</Typography.Text>
-          <ol style={{ margin: "4px 0", paddingLeft: 18 }}>
+          <div className="font-semibold">获取 Access Token / Refresh Token</div>
+          <ol className="my-1 list-decimal pl-4">
             <li>在浏览器登录 Sub2API 站点</li>
             <li>按 F12 打开开发者工具，切到 Application（存储）</li>
             <li>左侧 Local Storage 选中站点域名</li>

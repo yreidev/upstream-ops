@@ -20,8 +20,7 @@ var dataMigrations = []struct {
 }{
 	{name: "20261013_notification_subscriptions", run: migrateNotificationSubscriptions},
 	{name: "20261013_redact_notification_log_secrets", run: redactNotificationLogSecrets},
-	{name: "20261013_subscription_cch_sync_event", run: addSubscriptionEvent(EventCCHSync)},
-	{name: "20261013_subscription_degrade_event", run: addSubscriptionEvent(EventDegrade)},
+	{name: "20261124_remove_cch_and_degrade_data", run: removeCCHAndDegradeData},
 }
 
 func runDataMigrations(db *gorm.DB) error {
@@ -158,51 +157,81 @@ func upgradeSubscription(sub map[string]json.RawMessage, existingUpstreams []uin
 	return changed
 }
 
-// addSubscriptionEvent 给"只勾了部分事件"的订阅规则补上新增的事件（CCH 同步、降智检测），
-// 让已有的通知渠道默认也能收到；事件列表为空（全部事件）的规则本来就能收到，不用改。
-func addSubscriptionEvent(event NotificationEvent) func(*gorm.DB) error {
-	return func(db *gorm.DB) error { return appendSubscriptionEvent(db, event) }
-}
-
-func appendSubscriptionEvent(db *gorm.DB, event NotificationEvent) error {
-	var notifyChannels []NotificationChannel
-	if err := db.Find(&notifyChannels).Error; err != nil {
-		return err
-	}
-	for _, nc := range notifyChannels {
-		raw := strings.TrimSpace(nc.Subscriptions)
-		if raw == "" || raw == "null" || raw == "[]" {
-			continue
+// removeCCHAndDegradeData 清理已移除的 CCH 倍率同步与 GPT 降智检测留下的记录：
+//   - 从通知渠道订阅的 events 中剔除 cch_sync / degrade；若某条规则只订阅了这两项则移除该规则，
+//     若整条渠道的所有规则都因此清空则同时停用该渠道，避免空订阅意外变成“订阅全部事件”。
+//   - 删除失败状态、后台任务与监控日志中对应的历史行（通知发送记录按保留天数自然过期）。
+func removeCCHAndDegradeData(db *gorm.DB) error {
+	if db.Migrator().HasTable(&NotificationChannel{}) {
+		var notifyChannels []NotificationChannel
+		if err := db.Find(&notifyChannels).Error; err != nil {
+			return err
 		}
-		var subs []map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(raw), &subs); err != nil {
-			continue
-		}
-		changed := false
-		for _, sub := range subs {
-			var events []NotificationEvent
-			if err := json.Unmarshal(sub["events"], &events); err != nil || len(events) == 0 {
+		for _, nc := range notifyChannels {
+			raw := strings.TrimSpace(nc.Subscriptions)
+			if raw == "" || raw == "null" || raw == "[]" {
 				continue
 			}
-			if slices.Contains(events, event) {
+			var subs []map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(raw), &subs); err != nil {
 				continue
 			}
-			encoded, err := json.Marshal(append(events, event))
+			keptSubs := make([]map[string]json.RawMessage, 0, len(subs))
+			changed := false
+			for _, sub := range subs {
+				var events []string
+				if err := json.Unmarshal(sub["events"], &events); err != nil || len(events) == 0 {
+					keptSubs = append(keptSubs, sub)
+					continue
+				}
+				kept := make([]string, 0, len(events))
+				for _, e := range events {
+					if e == "cch_sync" || e == "degrade" {
+						changed = true
+						continue
+					}
+					kept = append(kept, e)
+				}
+				if len(kept) == 0 {
+					continue
+				}
+				if len(kept) != len(events) {
+					encoded, err := json.Marshal(kept)
+					if err != nil {
+						return err
+					}
+					sub["events"] = encoded
+				}
+				keptSubs = append(keptSubs, sub)
+			}
+			if !changed {
+				continue
+			}
+			out, err := json.Marshal(keptSubs)
 			if err != nil {
 				return err
 			}
-			sub["events"] = encoded
-			changed = true
+			updates := map[string]any{"subscriptions": string(out)}
+			if len(keptSubs) == 0 {
+				updates["enabled"] = false
+			}
+			if err := db.Model(&NotificationChannel{}).Where("id = ?", nc.ID).UpdateColumns(updates).Error; err != nil {
+				return err
+			}
 		}
-		if !changed {
-			continue
-		}
-		out, err := json.Marshal(subs)
-		if err != nil {
+	}
+	if db.Migrator().HasTable(&NotificationFailureState{}) {
+		if err := db.Where("kind = ?", "cch_sync").Delete(&NotificationFailureState{}).Error; err != nil {
 			return err
 		}
-		if err := db.Model(&NotificationChannel{}).Where("id = ?", nc.ID).
-			UpdateColumn("subscriptions", string(out)).Error; err != nil {
+	}
+	if db.Migrator().HasTable(&BackgroundJob{}) {
+		if err := db.Where("kind IN ?", []string{"cch_sync", "degrade_check", "degrade_check_all"}).Delete(&BackgroundJob{}).Error; err != nil {
+			return err
+		}
+	}
+	if db.Migrator().HasTable(&MonitorLog{}) {
+		if err := db.Where("job = ?", "cch_sync").Delete(&MonitorLog{}).Error; err != nil {
 			return err
 		}
 	}

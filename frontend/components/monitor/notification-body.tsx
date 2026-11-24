@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react"
-import { Spin, Typography } from "@douyinfe/semi-ui"
+import { Spinner } from "@heroui/react"
 import type { NotificationLog } from "@/lib/api-types"
 
 const Markdown = lazy(() => import("@/components/common/markdown"))
@@ -11,20 +11,16 @@ const Markdown = lazy(() => import("@/components/common/markdown"))
  */
 export function NotificationBody({ log }: { log: NotificationLog }) {
   return (
-    <div className="stack" style={{ gap: 8 }}>
+    <div className="stack gap-2">
       {log.event === "rate_changed" && log.body ? (
-        <Suspense fallback={<Spin />}>
+        <Suspense fallback={<Spinner size="sm" />}>
           <Markdown content={log.body} />
         </Suspense>
       ) : (
-        <Typography.Paragraph className="pre-wrap" style={{ margin: 0 }}>
-          {log.body || "—"}
-        </Typography.Paragraph>
+        <p className="pre-wrap m-0 text-sm text-foreground">{log.body || "—"}</p>
       )}
       {!log.success && log.error_message ? (
-        <Typography.Paragraph type="danger" className="pre-wrap" style={{ margin: 0 }}>
-          {log.error_message}
-        </Typography.Paragraph>
+        <p className="pre-wrap m-0 text-sm text-danger">{log.error_message}</p>
       ) : null}
     </div>
   )

@@ -14,7 +14,7 @@ export type NotificationChannelType = "telegram" | "wecom"
 export type CaptchaProviderType = "yescaptcha"
 
 /** 监控日志的任务类型（backend/storage/model.go MonitorJob*） */
-export type MonitorJob = "login" | "session" | "balance" | "costs" | "rates" | "cch_sync"
+export type MonitorJob = "login" | "session" | "balance" | "costs" | "rates"
 
 export type NotificationEvent =
   | "balance_low"
@@ -27,8 +27,6 @@ export type NotificationEvent =
   | "captcha_failed"
   | "monitor_failed"
   | "recovered"
-  | "cch_sync"
-  | "degrade"
 
 export interface Channel {
   id: number
@@ -195,10 +193,7 @@ export type JobKind =
   | "channel_sync_all"
   | "balance_scan"
   | "rate_scan"
-  | "cch_sync"
   | "retention"
-  | "degrade_check"
-  | "degrade_check_all"
 export type JobSource = "manual" | "scheduled"
 export type JobStatus = "running" | "succeeded" | "failed" | "interrupted"
 
@@ -210,7 +205,6 @@ export type ProgressStage =
   | "balance"
   | "cost"
   | "rates"
-  | "degrade"
   | "done"
   | "skipped"
   | "error"
@@ -320,8 +314,6 @@ export interface SystemSchedulerRetentionConfig {
 export interface SystemSchedulerConfig {
   balanceCron: string
   rateCron: string
-  /** 降智巡检；空表示不定时巡检。 */
-  degradeCron: string
   retention: SystemSchedulerRetentionConfig
 }
 
@@ -336,20 +328,12 @@ export interface SystemUpstreamConfig {
   userAgent: string
 }
 
-/** GPT 降智检测的默认模型和推理强度，单把密钥可以另设。 */
-export interface SystemDegradeConfig {
-  /** 备选模型，按顺序挑分组里有的第一个 */
-  models: string[]
-  effort: string
-}
-
 export interface SystemConfig {
   app: AppConfig
   auth: SystemAuthConfig
   scheduler: SystemSchedulerConfig
   notifications: SystemNotificationsConfig
   upstream: SystemUpstreamConfig
-  degrade: SystemDegradeConfig
 }
 
 export interface SystemConfigResponse {
@@ -377,131 +361,6 @@ export interface AppReleaseNote {
   url: string
   published_at: string
   notes: string
-}
-
-/** CCH 成本倍率同步配置（backend/cch/sync.go SettingsView），令牌只返回有没有填。 */
-export interface CCHSyncSettings {
-  enabled: boolean
-  base_url: string
-  token_set: boolean
-  last_run_at?: string
-  last_summary?: string
-  last_error?: string
-}
-
-/** GPT 降智检测（backend/storage/degrade.go、backend/degrade/service.go）。 */
-export type DegradeState = "unknown" | "normal" | "degraded"
-export type DegradeResult = "correct" | "wrong" | "failed"
-
-/** 参与检测的一把密钥；model 为空表示按备选模型列表挑，effort 为空表示用默认值。 */
-export interface DegradeKey {
-  id: number
-  channel_id: number
-  upstream_key_id: number
-  name: string
-  group_name: string
-  key_tail: string
-  key_source: "revealed" | "pasted"
-  model: string
-  effort: string
-  state: DegradeState
-  state_changed_at?: string
-  last_checked_at?: string
-  last_result?: DegradeResult
-  last_message?: string
-  /** 最近一轮答过题时用的模型 */
-  last_model?: string
-  created_at: string
-  updated_at: string
-  channel_name: string
-  channel_type: ChannelType | ""
-  /** 要试的模型：单独指定了就只有它，否则是备选列表 */
-  models: string[]
-  effective_effort: string
-  /** 正在跑检测（单独检测或全部检测）。 */
-  checking: boolean
-}
-
-export interface DegradeKeyList {
-  items: DegradeKey[]
-  defaults: SystemDegradeConfig
-  /** 降智巡检 Cron，空表示没开。 */
-  cron: string
-}
-
-/** 一次检测（一道题）；attempt 1 是首测，2、3 是复测。 */
-export interface DegradeCheck {
-  id: number
-  key_id: number
-  channel_id: number
-  attempt: number
-  model: string
-  effort: string
-  result: DegradeResult
-  answer?: string
-  error?: string
-  input_tokens: number
-  output_tokens: number
-  reasoning_tokens: number
-  duration_ms: number
-  checked_at: string
-}
-
-/** 渠道里可以加入检测的上游密钥。 */
-export interface DegradeCandidate {
-  id: number
-  name: string
-  group_name: string
-  group_ratio: number
-  status: string
-  key_tail?: string
-  added: boolean
-}
-
-/** 一把密钥一轮检测的结果，是单独检测任务的 result。 */
-export interface DegradeRound {
-  key_id: number
-  label: string
-  model: string
-  effort: string
-  results: DegradeResult[]
-  before: DegradeState
-  state: DegradeState
-  changed: boolean
-  message: string
-  error?: string
-  busy?: boolean
-}
-
-/** 一个 CCH 供应商的配对和同步结果（backend/cch/sync.go Status）。 */
-export type CCHSyncStatus = "in_sync" | "pending" | "updated" | "failed" | "skipped"
-
-export interface CCHSyncItem {
-  provider_id: number
-  provider_name: string
-  provider_enabled: boolean
-  provider_host: string
-  key_tail?: string
-  current: number
-  channel_id?: number
-  channel_name?: string
-  key_name?: string
-  group_name?: string
-  target?: number
-  status: CCHSyncStatus
-  reason?: string
-}
-
-/** 一轮配对 / 同步的结果；applied 为 false 表示只是预览。 */
-export interface CCHSyncResult {
-  applied: boolean
-  finished_at: string
-  items: CCHSyncItem[]
-  in_sync: number
-  pending: number
-  updated: number
-  failed: number
-  skipped: number
 }
 
 export interface ChannelRedeemResult {

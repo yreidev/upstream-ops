@@ -791,13 +791,6 @@ func TestDeleteChannelCleansScopedState(t *testing.T) {
 	if err := db.Create(&UpstreamAnnouncement{ChannelID: ch.ID, SourceKey: "a", Content: "deleted", FirstSeenAt: now}).Error; err != nil {
 		t.Fatalf("create announcement: %v", err)
 	}
-	degradeKey := &DegradeKey{ChannelID: ch.ID, UpstreamKeyID: 7, KeyCipher: "x"}
-	if err := NewDegradeKeys(db).Create(degradeKey); err != nil {
-		t.Fatalf("create degrade key: %v", err)
-	}
-	if err := db.Create(&DegradeCheck{KeyID: degradeKey.ID, ChannelID: ch.ID, Attempt: 1, Model: "m", Result: DegradeCorrect, CheckedAt: now}).Error; err != nil {
-		t.Fatalf("create degrade check: %v", err)
-	}
 
 	if err := channels.Delete(ch.ID); err != nil {
 		t.Fatalf("delete channel: %v", err)
@@ -816,8 +809,6 @@ func TestDeleteChannelCleansScopedState(t *testing.T) {
 		{"notification_cooldowns", &NotificationCooldown{}},
 		{"notification_failure_states", &NotificationFailureState{}},
 		{"upstream_announcements", &UpstreamAnnouncement{}},
-		{"degrade_keys", &DegradeKey{}},
-		{"degrade_checks", &DegradeCheck{}},
 		{"notification_logs", &NotificationLog{}},
 	} {
 		var count int64
@@ -967,6 +958,9 @@ func TestAutoMigrateDropsRemovedFeatureState(t *testing.T) {
 		"CREATE TABLE gateway_providers (id integer PRIMARY KEY)",
 		"CREATE TABLE gateway_usage_logs (id integer PRIMARY KEY)",
 		"CREATE TABLE model_price_overrides (id integer PRIMARY KEY)",
+		"CREATE TABLE cch_sync_configs (id integer PRIMARY KEY)",
+		"CREATE TABLE degrade_keys (id integer PRIMARY KEY)",
+		"CREATE TABLE degrade_checks (id integer PRIMARY KEY)",
 		"ALTER TABLE channels ADD COLUMN subscription_enabled numeric DEFAULT false",
 		"ALTER TABLE channels ADD COLUMN proxy_enabled numeric DEFAULT false",
 		"ALTER TABLE captcha_configs ADD COLUMN proxy_enabled numeric DEFAULT false",

@@ -61,9 +61,6 @@ type Scheduler struct {
 	captchas      *storage.Captchas
 	cipher        *crypto.Cipher
 	jobs          *jobs.Runner
-	afterRates    func()
-	degradeRun    func()
-	degradeChecks *storage.DegradeKeys
 }
 
 // New 构造调度器。
@@ -98,20 +95,6 @@ func (s *Scheduler) WithJobs(r *jobs.Runner) *Scheduler {
 	return s
 }
 
-// OnRatesScanned 注册每轮定时倍率采集结束后要跑的任务（把分组倍率同步到 CCH），在 Start 之前调用。
-func (s *Scheduler) OnRatesScanned(fn func()) *Scheduler {
-	s.afterRates = fn
-	return s
-}
-
-// WithDegrade 接上 GPT 降智检测：按 DegradeCron 跑 run（巡检全部密钥），清理历史时按监控日志的天数删检测记录。
-// 在 Start 之前调用。
-func (s *Scheduler) WithDegrade(checks *storage.DegradeKeys, run func()) *Scheduler {
-	s.degradeChecks = checks
-	s.degradeRun = run
-	return s
-}
-
 // Start 注册 cron 任务并启动。
 func (s *Scheduler) Start() error {
 	if s.cfg.BalanceCron != "" {
@@ -121,11 +104,6 @@ func (s *Scheduler) Start() error {
 	}
 	if s.cfg.RateCron != "" {
 		if _, err := s.cron.AddFunc(s.cfg.RateCron, s.runRates); err != nil {
-			return err
-		}
-	}
-	if s.cfg.DegradeCron != "" && s.degradeRun != nil {
-		if _, err := s.cron.AddFunc(s.cfg.DegradeCron, s.degradeRun); err != nil {
 			return err
 		}
 	}
@@ -139,7 +117,6 @@ func (s *Scheduler) Start() error {
 		"balanceCron", s.cfg.BalanceCron,
 		"rateCron", s.cfg.RateCron,
 		"retentionCron", s.cfg.Retention.Cron,
-		"degradeCron", s.cfg.DegradeCron,
 	)
 	return nil
 }
@@ -208,9 +185,6 @@ func (s *Scheduler) runRates() {
 			return sum.Message(), sum, sum.Err()
 		})
 	}
-	if s.afterRates != nil {
-		s.afterRates()
-	}
 }
 
 func (s *Scheduler) hasRetention() bool {
@@ -265,9 +239,6 @@ func (s *Scheduler) retention(ctx context.Context) (string, any, error) {
 	}
 	if s.jobs != nil {
 		clean("后台任务", r.MonitorLogsDays, s.jobs.DeleteBefore)
-	}
-	if s.degradeChecks != nil {
-		clean("降智检测记录", r.MonitorLogsDays, s.degradeChecks.DeleteChecksBefore)
 	}
 	if s.rates != nil {
 		clean("余额快照", r.BalanceSnapshotsDays, s.rates.DeleteBalanceSnapshotsBefore)

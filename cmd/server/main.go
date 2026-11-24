@@ -15,11 +15,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yreidev/upstream-ops/backend/api"
 	"github.com/yreidev/upstream-ops/backend/auth"
-	"github.com/yreidev/upstream-ops/backend/cch"
 	"github.com/yreidev/upstream-ops/backend/channel"
 	"github.com/yreidev/upstream-ops/backend/config"
 	"github.com/yreidev/upstream-ops/backend/crypto"
-	"github.com/yreidev/upstream-ops/backend/degrade"
 	"github.com/yreidev/upstream-ops/backend/jobs"
 	"github.com/yreidev/upstream-ops/backend/logger"
 	"github.com/yreidev/upstream-ops/backend/monitor"
@@ -113,24 +111,12 @@ func main() {
 		SendMaxAttempts:    cfg.Notifications.SendMaxAttempts,
 	})
 	monitorSvc := monitor.NewService(channels, announcements, rates, monLogs, channelSvc, dispatcher, log)
-	cchSyncSvc := cch.NewService(storage.NewCCHSync(db), channels, channelSvc, monLogs, dispatcher, cipher, log, channelSvc.UpstreamConfig)
 	jobRepo := storage.NewBackgroundJobs(db)
 	jobRunner := jobs.NewRunner(jobRepo, log)
-	degradeKeys := storage.NewDegradeKeys(db)
-	degradeSvc := degrade.NewService(degradeKeys, channels, channelSvc, dispatcher, cipher, log)
-	degradeSvc.UpdateDefaults(cfg.Degrade)
 
 	schedulerFactory := func(scfg config.SchedulerConfig) *scheduler.Scheduler {
 		return scheduler.New(scfg, monitorSvc, monLogs, rates, notifies, announcements, captchas, cipher, log).
-			WithJobs(jobRunner).
-			OnRatesScanned(func() {
-				if cchSyncSvc.ScheduledEnabled() {
-					jobRunner.Run(cch.JobSpec(storage.JobScheduled), cchSyncSvc.RunScheduled)
-				}
-			}).
-			WithDegrade(degradeKeys, func() {
-				jobRunner.Run(degrade.CheckAllJobSpec(storage.JobScheduled), degradeSvc.CheckAll)
-			})
+			WithJobs(jobRunner)
 	}
 	sch := schedulerFactory(cfg.Scheduler)
 	if err := sch.Start(); err != nil {
@@ -151,7 +137,6 @@ func main() {
 		cfg.Upstream,
 		schedulerFactory,
 	)
-	runtimeMgr.OnApply(func(c *config.Config) { degradeSvc.UpdateDefaults(c.Degrade) })
 
 	gin.SetMode(cfg.Server.Mode)
 	router := gin.New()
@@ -183,8 +168,6 @@ func main() {
 		MonLogs:       monLogs,
 		ChannelSvc:    channelSvc,
 		Monitor:       monitorSvc,
-		CCHSync:       cchSyncSvc,
-		Degrade:       degradeSvc,
 		Jobs:          jobRunner,
 		JobRepo:       jobRepo,
 		Dispatcher:    dispatcher,

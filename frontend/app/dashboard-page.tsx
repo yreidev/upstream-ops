@@ -1,28 +1,51 @@
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react"
+import { lazy, Suspense, useMemo, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { Card, Collapsible, Empty, Skeleton, Spin, Tag, Typography } from "@douyinfe/semi-ui"
 import {
-  IconArrowDown,
-  IconArrowUp,
-  IconChevronDown,
-  IconChevronRight,
-  IconCoinMoneyStroked,
-  IconCreditCard,
-  IconLineChartStroked,
-  IconServer,
-} from "@douyinfe/semi-icons"
+  Accordion,
+  Card,
+  Chip,
+  EmptyState,
+  ScrollShadow,
+  Separator,
+  Skeleton,
+  Spinner,
+} from "@heroui/react"
+import {
+  ArrowDown,
+  ArrowUp,
+  ChartLine,
+  CreditCard,
+  Layers,
+  Server,
+} from "@gravity-ui/icons"
 import { PageHeader } from "@/components/layout/page-header"
 import type { BalanceCostPoint } from "@/components/charts/balance-cost-chart"
 import { NotificationBody } from "@/components/monitor/notification-body"
 import { notificationEventLabel } from "@/lib/labels"
 import { channelTypeLabel, formatRatio, money, ratioDelta, relativeTime } from "@/lib/format"
-import { useBalanceTrend, useChannels, useCostTrend, useDashboardSummary, useNotificationLogs, useRateChanges } from "@/lib/queries"
+import {
+  useBalanceTrend,
+  useChannels,
+  useCostTrend,
+  useDashboardSummary,
+  useNotificationLogs,
+  useRateChanges,
+} from "@/lib/queries"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 const BalanceCostChart = lazy(() => import("@/components/charts/balance-cost-chart"))
 
 const TREND_DAYS = 7
 const PREVIEW_SIZE = 8
+
+type KpiTone = "accent" | "warning" | "success" | "danger"
+
+const toneClass: Record<KpiTone, string> = {
+  accent: "bg-accent/10 text-accent",
+  warning: "bg-warning/15 text-warning",
+  success: "bg-success/12 text-success",
+  danger: "bg-danger/10 text-danger",
+}
 
 export default function DashboardPage() {
   return (
@@ -38,52 +61,52 @@ export default function DashboardPage() {
   )
 }
 
-function KpiCard({ label, value, icon, color, footer, loading }: {
+function KpiCard({
+  label,
+  value,
+  icon,
+  tone,
+  footer,
+  loading,
+}: {
   label: string
   value: ReactNode
   icon: ReactNode
-  color: string
+  tone: KpiTone
   footer: ReactNode
   loading: boolean
 }) {
   // 手机上两列卡片很窄，去掉图标、字号降一级，金额才放得下
   const isMobile = useIsMobile()
   return (
-    <Card bodyStyle={{ padding: isMobile ? 12 : 16 }}>
-      <div className="row-between" style={{ alignItems: "flex-start" }}>
-        <div className="stack" style={{ gap: 4, minWidth: 0 }}>
-          <Typography.Text type="tertiary" size="small">
-            {label}
-          </Typography.Text>
-          <Skeleton loading={loading} placeholder={<Skeleton.Title style={{ width: 120, height: 28 }} />} active>
-            {/* 金额很大时在卡片内换行，不压到右边的图标 */}
-            <Typography.Title heading={isMobile ? 4 : 3} className="num" style={{ margin: 0, overflowWrap: "anywhere" }}>
-              {value}
-            </Typography.Title>
-          </Skeleton>
-          <Typography.Text type="tertiary" size="small" ellipsis={{ showTooltip: true }}>
-            {footer}
-          </Typography.Text>
-        </div>
-        {isMobile ? null : (
+    <Card className={`rounded-2xl ${isMobile ? "gap-1.5 p-3" : "gap-1.5 p-4"}`}>
+      <Card.Header className="flex-row items-center justify-between gap-2">
+        <Card.Title className="text-xs leading-tight font-medium text-muted">{label}</Card.Title>
+        {!isMobile ? (
           <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 40,
-              height: 40,
-              flexShrink: 0,
-              borderRadius: 10,
-              color: `var(--semi-color-${color})`,
-              background: `var(--semi-color-${color}-light-default)`,
-              fontSize: 20,
-            }}
+            className={`inline-flex size-8 shrink-0 items-center justify-center rounded-lg ${toneClass[tone]}`}
           >
             {icon}
           </span>
+        ) : null}
+      </Card.Header>
+      <Card.Content className="gap-1">
+        {loading ? (
+          <Skeleton className="h-7 w-28 rounded-lg" />
+        ) : (
+          <div
+            className={`num font-semibold tracking-tight text-foreground ${
+              isMobile ? "text-lg" : "text-2xl"
+            }`}
+            style={{ overflowWrap: "anywhere" }}
+          >
+            {value}
+          </div>
         )}
-      </div>
+        <span className="truncate text-xs text-muted" title={typeof footer === "string" ? footer : undefined}>
+          {footer}
+        </span>
+      </Card.Content>
     </Card>
   )
 }
@@ -107,24 +130,24 @@ function KpiCards() {
       <KpiCard
         label="总余额"
         value={money(d?.total_balance ?? 0)}
-        icon={<IconCoinMoneyStroked />}
-        color="primary"
+        icon={<Layers className="size-4" />}
+        tone="accent"
         loading={loading}
         footer={d?.lowest_balance ? `最低：${d.lowest_balance.name} ${money(d.lowest_balance.balance)}` : "—"}
       />
       <KpiCard
         label="今日总消费"
         value={money(d?.today_total_cost ?? 0)}
-        icon={<IconCreditCard />}
-        color="warning"
+        icon={<CreditCard className="size-4" />}
+        tone="warning"
         loading={loading}
         footer={(d?.today_total_cost ?? 0) > 0 ? "按实际扣费统计" : "今日暂无消费"}
       />
       <KpiCard
         label="累计消费"
         value={money(d?.total_cost ?? 0)}
-        icon={<IconCoinMoneyStroked />}
-        color="primary"
+        icon={<CreditCard className="size-4" />}
+        tone="accent"
         loading={loading}
         footer={(d?.total_cost ?? 0) > 0 ? "全渠道累计实际扣费" : "暂无累计消费"}
       />
@@ -133,24 +156,22 @@ function KpiCards() {
         value={
           <>
             {d?.active_channels ?? 0}
-            <Typography.Text type="tertiary" style={{ fontSize: 18, fontWeight: 400 }}>
+            <span className="text-base font-normal text-muted">
               {" / "}
               {d?.total_channels ?? 0}
-            </Typography.Text>
+            </span>
           </>
         }
-        icon={<IconServer />}
-        color="success"
+        icon={<Server className="size-4" />}
+        tone="success"
         loading={loading}
         footer={failed > 0 ? `${d?.active_channels ?? 0} 健康 · ${failed} 失败` : `${d?.active_channels ?? 0} 健康`}
       />
       <KpiCard
         label="今日倍率变动"
-        value={
-          <span style={{ color: todayChanges > 0 ? "var(--semi-color-danger)" : undefined }}>{todayChanges}</span>
-        }
-        icon={<IconLineChartStroked />}
-        color="danger"
+        value={<span className={todayChanges > 0 ? "text-danger" : undefined}>{todayChanges}</span>}
+        icon={<ChartLine className="size-4" />}
+        tone="danger"
         loading={loading}
         footer={todayChanges > 0 ? `检测到 ${todayChanges} 次变动` : "今日无变动"}
       />
@@ -184,60 +205,66 @@ function TrendCard() {
   const loading = (trend.loading && !trend.data) || (costTrend.loading && !costTrend.data)
 
   return (
-    <Card
-      title="余额与消费"
-      headerExtraContent={<Typography.Text type="tertiary" size="small">最近 {TREND_DAYS} 天</Typography.Text>}
-      bodyStyle={{ padding: isMobile ? 8 : 16 }}
-    >
-      <div style={{ height: 280 }}>
-        {loading ? (
-          <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}>
-            <Spin />
-          </div>
-        ) : data.length === 0 ? (
-          <Empty description="暂无趋势采样，等待下次采集或到渠道页手动同步" style={{ paddingTop: 80 }} />
-        ) : (
-          <Suspense fallback={<Spin />}>
-            <BalanceCostChart data={data} compact={isMobile} />
-          </Suspense>
-        )}
-      </div>
-      {channels.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: "1px solid var(--semi-color-border)",
-            maxHeight: 96,
-            overflowY: "auto",
-          }}
-        >
-          {channels.map((c) => (
-            <Tag
-              key={c.id}
-              color={c.last_error ? "red" : c.last_balance == null ? "grey" : "green"}
-              type="light"
-              size="large"
-              className="num"
-              // 子元素是纯字符串时 Tag 才会超长省略，手机上长渠道名不会撑出卡片
-              style={{ maxWidth: "100%" }}
+    <Card className="rounded-2xl p-4">
+      <Card.Header className="flex-row items-center justify-between gap-2">
+        <Card.Title className="text-base font-semibold">余额与消费</Card.Title>
+        <Chip size="sm" variant="soft">
+          最近 {TREND_DAYS} 天
+        </Chip>
+      </Card.Header>
+      <Card.Content className="gap-3">
+        <div className="h-[280px]">
+          {loading ? (
+            <div className="flex h-full items-center justify-center">
+              <Spinner />
+            </div>
+          ) : data.length === 0 ? (
+            <EmptyState className="flex h-full items-center justify-center text-sm text-muted">
+              暂无趋势采样，等待下次采集或到渠道页手动同步
+            </EmptyState>
+          ) : (
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center">
+                  <Spinner />
+                </div>
+              }
             >
-              {`${c.name} · ${money(c.last_balance)} · 今日 ${money(c.today_cost)}`}
-            </Tag>
-          ))}
+              <BalanceCostChart data={data} compact={isMobile} />
+            </Suspense>
+          )}
         </div>
-      ) : null}
+        {channels.length > 0 ? (
+          <>
+            <Separator />
+            <ScrollShadow className="max-h-24" size={20}>
+              <div className="flex flex-wrap gap-1.5 py-0.5">
+                {channels.map((c) => (
+                  <Chip
+                    key={c.id}
+                    color={c.last_error ? "danger" : c.last_balance == null ? "default" : "success"}
+                    variant="soft"
+                    size="sm"
+                    className="num max-w-full"
+                  >
+                    <Chip.Label className="truncate">
+                      {`${c.name} · ${money(c.last_balance)} · 今日 ${money(c.today_cost)}`}
+                    </Chip.Label>
+                  </Chip>
+                ))}
+              </div>
+            </ScrollShadow>
+          </>
+        ) : null}
+      </Card.Content>
     </Card>
   )
 }
 
 function SeeAll({ to }: { to: string }) {
   return (
-    <Link to={to}>
-      <Typography.Text link>查看全部</Typography.Text>
+    <Link to={to} className="link text-xs font-medium text-accent">
+      查看全部
     </Link>
   )
 }
@@ -250,42 +277,54 @@ function RecentRateChanges() {
 
   // 高度跟左边的走势卡片对齐，放不下的几条不显示，点“查看全部”看
   return (
-    <Card className="fill-card" title="最近倍率变动" headerExtraContent={<SeeAll to="/rates" />} bodyStyle={{ padding: 0 }}>
-      {summary.loading && !summary.data ? (
-        <div style={{ padding: 16 }}>
-          <Skeleton placeholder={<Skeleton.Paragraph rows={6} />} loading active />
-        </div>
-      ) : items.length === 0 ? (
-        <Empty description="暂无倍率变动记录" style={{ padding: 32 }} />
-      ) : (
-        <div className="list-rows fit-rows">
-          {items.map((item) => {
-            const ch = channelMap.get(item.channel_id)
-            const delta = ratioDelta(item.old_ratio, item.new_ratio)
-            const up = delta.direction === "up"
-            return (
-              <div key={item.id} className="row-between" style={{ padding: "10px 16px" }}>
-                <div className="stack" style={{ gap: 2 }}>
-                  <Typography.Text strong ellipsis={{ showTooltip: true }}>
-                    {item.model_name}
-                  </Typography.Text>
-                  <Typography.Text type="tertiary" size="small" ellipsis={{ showTooltip: true }}>
-                    {ch ? `${ch.name} · ${channelTypeLabel(ch.type)}` : `渠道 #${item.channel_id}`} · {relativeTime(item.changed_at)}
-                  </Typography.Text>
+    <Card className="fill-card rounded-2xl p-4">
+      <Card.Header className="shrink-0 flex-row items-center justify-between gap-2">
+        <Card.Title className="text-base font-semibold">最近倍率变动</Card.Title>
+        <SeeAll to="/rates" />
+      </Card.Header>
+      <Separator />
+      <Card.Content className="fill-card-body -mx-4 -mb-4">
+        {summary.loading && !summary.data ? (
+          <div className="stack gap-3 p-4">
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState className="py-10 text-sm text-muted">暂无倍率变动记录</EmptyState>
+        ) : (
+          <div className="list-rows fit-rows">
+            {items.map((item) => {
+              const ch = channelMap.get(item.channel_id)
+              const delta = ratioDelta(item.old_ratio, item.new_ratio)
+              const up = delta.direction === "up"
+              const subtitle = `${ch ? `${ch.name} · ${channelTypeLabel(ch.type)}` : `渠道 #${item.channel_id}`} · ${relativeTime(item.changed_at)}`
+              return (
+                <div key={item.id} className="row-between px-4 py-2.5">
+                  <div className="stack min-w-0 gap-0.5">
+                    <span className="truncate text-sm font-medium text-foreground" title={item.model_name}>
+                      {item.model_name}
+                    </span>
+                    <span className="truncate text-xs text-muted" title={subtitle}>
+                      {subtitle}
+                    </span>
+                  </div>
+                  <div className="stack shrink-0 items-end gap-0.5">
+                    <Chip color={up ? "danger" : "success"} variant="soft" size="sm" className="num">
+                      {up ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}
+                      <Chip.Label>{delta.pct}</Chip.Label>
+                    </Chip>
+                    <span className="num text-xs text-muted">
+                      {formatRatio(item.old_ratio)} → {formatRatio(item.new_ratio)}
+                    </span>
+                  </div>
                 </div>
-                <div className="stack" style={{ gap: 2, alignItems: "flex-end", flexShrink: 0 }}>
-                  <Tag color={up ? "red" : "green"} prefixIcon={up ? <IconArrowUp /> : <IconArrowDown />}>
-                    {delta.pct}
-                  </Tag>
-                  <Typography.Text type="tertiary" size="small" className="num">
-                    {formatRatio(item.old_ratio)} → {formatRatio(item.new_ratio)}
-                  </Typography.Text>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )}
+      </Card.Content>
     </Card>
   )
 }
@@ -293,65 +332,62 @@ function RecentRateChanges() {
 function RecentNotifications() {
   const logs = useNotificationLogs(1, PREVIEW_SIZE)
   const items = logs.data?.items ?? []
-  // 点一行展开正文，同一时间只展开一条
-  const [openId, setOpenId] = useState<number | null>(null)
 
   return (
-    <Card title="最近通知" headerExtraContent={<SeeAll to="/notifications" />} bodyStyle={{ padding: 0 }}>
-      {logs.loading && !logs.data ? (
-        <div style={{ padding: 16 }}>
-          <Skeleton placeholder={<Skeleton.Paragraph rows={4} />} loading active />
-        </div>
-      ) : items.length === 0 ? (
-        <Empty description="暂无通知记录" style={{ padding: 32 }} />
-      ) : (
-        <div className="list-rows">
-          {items.map((a) => {
-            const ev = notificationEventLabel(a.event)
-            const open = openId === a.id
-            const toggle = () => setOpenId(open ? null : a.id)
-            return (
-              <div key={a.id}>
-                <div
-                  className="row-between clickable-row"
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={open}
-                  onClick={toggle}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      toggle()
-                    }
-                  }}
-                  style={{ padding: "10px 16px" }}
-                >
-                  <div className="row" style={{ minWidth: 0 }}>
-                    {open ? <IconChevronDown className="row-chevron" /> : <IconChevronRight className="row-chevron" />}
-                    <Tag color={ev.color} style={{ flexShrink: 0 }}>
-                      {ev.label}
-                    </Tag>
-                    <Typography.Text ellipsis={{ showTooltip: true }}>{a.subject}</Typography.Text>
-                    {a.success ? null : (
-                      <Tag color="red" type="ghost" style={{ flexShrink: 0 }}>
-                        发送失败
-                      </Tag>
-                    )}
-                  </div>
-                  <Typography.Text type="tertiary" size="small" style={{ flexShrink: 0 }}>
-                    {a.channel_name ?? `渠道 #${a.channel_id}`} · {relativeTime(a.sent_at)}
-                  </Typography.Text>
-                </div>
-                <Collapsible isOpen={open} lazyRender>
-                  <div style={{ padding: "0 16px 12px 40px" }}>
-                    <NotificationBody log={a} />
-                  </div>
-                </Collapsible>
-              </div>
-            )
-          })}
-        </div>
-      )}
+    <Card className="rounded-2xl p-4">
+      <Card.Header className="flex-row items-center justify-between gap-2">
+        <Card.Title className="text-base font-semibold">最近通知</Card.Title>
+        <SeeAll to="/notifications" />
+      </Card.Header>
+      <Card.Content>
+        {logs.loading && !logs.data ? (
+          <div className="stack gap-2.5 pt-1">
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState className="py-8 text-sm text-muted">暂无通知记录</EmptyState>
+        ) : (
+          <Accordion className="w-full">
+            {items.map((a) => {
+              const ev = notificationEventLabel(a.event)
+              return (
+                <Accordion.Item key={a.id} id={String(a.id)}>
+                  <Accordion.Heading>
+                    <Accordion.Trigger className="px-1 py-2.5">
+                      <div className="row-between min-w-0 flex-1 gap-3 pr-2">
+                        <div className="row min-w-0">
+                          <Chip color={ev.color} variant="soft" size="sm" className="shrink-0">
+                            {ev.label}
+                          </Chip>
+                          <span className="truncate text-sm font-normal text-foreground" title={a.subject}>
+                            {a.subject}
+                          </span>
+                          {!a.success ? (
+                            <Chip color="danger" variant="tertiary" size="sm" className="shrink-0">
+                              发送失败
+                            </Chip>
+                          ) : null}
+                        </div>
+                        <span className="shrink-0 text-xs font-normal text-muted">
+                          {a.channel_name ?? `渠道 #${a.channel_id}`} · {relativeTime(a.sent_at)}
+                        </span>
+                      </div>
+                      <Accordion.Indicator />
+                    </Accordion.Trigger>
+                  </Accordion.Heading>
+                  <Accordion.Panel>
+                    <Accordion.Body className="px-2 pb-3 pt-1">
+                      <NotificationBody log={a} />
+                    </Accordion.Body>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              )
+            })}
+          </Accordion>
+        )}
+      </Card.Content>
     </Card>
   )
 }

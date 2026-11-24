@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
-import { Input, InputNumber, Select, TimePicker, Typography, withField } from "@douyinfe/semi-ui"
+import { Time } from "@internationalized/date"
+import { Description, Input, InputGroup, Label, ListBox, Select, TextField, TimeField } from "@heroui/react"
 import { apiFetch } from "@/lib/api"
 import {
   buildCron,
@@ -52,7 +53,11 @@ function offsetText(seconds: number): string {
 
 /** 接下来几次运行时间，由后端按调度器的规则算；写错时显示中文报错 */
 function useNextRuns(spec: string): { runs: NextRuns | null; error: string } {
-  const [state, setState] = useState<{ spec: string; runs: NextRuns | null; error: string }>({ spec: "", runs: null, error: "" })
+  const [state, setState] = useState<{ spec: string; runs: NextRuns | null; error: string }>({
+    spec: "",
+    runs: null,
+    error: "",
+  })
   useEffect(() => {
     if (!spec) return
     let cancelled = false
@@ -69,16 +74,19 @@ function useNextRuns(spec: string): { runs: NextRuns | null; error: string } {
   return state.spec === spec ? state : { runs: null, error: "" }
 }
 
-interface CronPickerProps {
+export interface CronPickerProps {
+  label: string
   value?: string
   onChange?: (value: string) => void
   disabled?: boolean
   /** “不运行”时显示的说明，比如“不定时巡检” */
   offText?: string
+  /** 环境变量覆盖说明 */
+  extraText?: string
 }
 
 /** 选周期：先选方式再填数字或时间，表达式藏进“自定义”。 */
-export function CronPicker({ value, onChange, disabled, offText = "不定时运行" }: CronPickerProps) {
+export function CronPicker({ label, value, onChange, disabled, offText = "不定时运行", extraText }: CronPickerProps) {
   const spec = (value ?? "").trim()
   // 方式和各项数字自己记着：从“每天”切到“每周”时沿用时间，自定义里打到一半的也不会被重新解析掉
   const [plan, setPlan] = useState<CronPlan>(() => parseCron(spec))
@@ -99,13 +107,9 @@ export function CronPicker({ value, onChange, disabled, offText = "不定时运�
   const { runs, error } = useNextRuns(spec)
   const description = plan.mode === "custom" ? describeCron(spec) : ""
   const browserOffset = -new Date().getTimezoneOffset() * 60
-  const time = `${pad2(plan.hour)}:${pad2(plan.minute)}`
-  const setTime = (a: unknown, b: unknown) => {
-    const d = a instanceof Date ? a : b instanceof Date ? b : null
-    if (d) update({ ...plan, hour: d.getHours(), minute: d.getMinutes() })
-  }
+  const maxMinute = plan.mode === "minutes" ? plan.every - 1 : 59
+  const clampMinute = (v: number) => (Number.isFinite(v) ? Math.min(Math.max(0, Math.round(v)), maxMinute) : 0)
 
-  const clampMinute = (v: number, max: number) => (Number.isFinite(v) ? Math.min(Math.max(0, Math.round(v)), max) : 0)
   const preview =
     plan.mode === "off" || !spec
       ? offText
@@ -117,72 +121,166 @@ export function CronPicker({ value, onChange, disabled, offText = "不定时运�
             : "这个表达式永远不会运行"
           : "正在计算运行时间…"
 
-  // 设置页一行三列、每列最窄 280 像素：第一行选方式，第二行用带前后缀的小控件填参数
+  // 设置页一行两到三列、每列最窄 280 像素：第一行选方式，第二行用带前后缀的小控件填参数
   return (
-    <div className="stack" style={{ gap: 8 }}>
-      <Select value={plan.mode} disabled={disabled} style={{ width: "100%" }} optionList={cronModes} onChange={(v) => update(switchMode(plan, v as CronMode))} />
+    <div className="stack gap-1.5">
+      <Select
+        variant="secondary"
+        fullWidth
+        value={plan.mode}
+        isDisabled={disabled}
+        onChange={(k) => k != null && update(switchMode(plan, String(k) as CronMode))}
+      >
+        <Label>{label}</Label>
+        <Select.Trigger>
+          <Select.Value />
+          <Select.Indicator />
+        </Select.Trigger>
+        <Select.Popover>
+          <ListBox>
+            {cronModes.map((m) => (
+              <ListBox.Item key={m.value} id={m.value} textValue={m.label}>
+                {m.label}
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+            ))}
+          </ListBox>
+        </Select.Popover>
+      </Select>
+
       {plan.mode === "minutes" || plan.mode === "hours" ? (
-        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="row flex-wrap gap-2">
           <Select
-            value={plan.every}
-            disabled={disabled}
-            prefix="每"
-            style={{ width: 128 }}
-            optionList={(plan.mode === "minutes" ? minuteSteps : hourSteps).map((n) => ({ value: n, label: `${n} ${plan.mode === "minutes" ? "分钟" : "小时"}` }))}
-            onChange={(v) => update({ ...plan, every: Number(v), minute: plan.mode === "minutes" && plan.minute >= Number(v) ? 0 : plan.minute })}
-          />
+            variant="secondary"
+            aria-label={`${label} 间隔`}
+            value={String(plan.every)}
+            isDisabled={disabled}
+            onChange={(k) => {
+              if (k == null) return
+              const every = Number(k)
+              update({
+                ...plan,
+                every,
+                minute: plan.mode === "minutes" && plan.minute >= every ? 0 : plan.minute,
+              })
+            }}
+            className="w-32"
+          >
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {(plan.mode === "minutes" ? minuteSteps : hourSteps).map((n) => {
+                  const text = `每 ${n} ${plan.mode === "minutes" ? "分钟" : "小时"}`
+                  return (
+                    <ListBox.Item key={n} id={String(n)} textValue={text}>
+                      {text}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  )
+                })}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+
           {plan.mode === "hours" || plan.every > 1 ? (
-            <InputNumber
-              value={plan.minute}
-              disabled={disabled}
-              prefix={plan.mode === "minutes" ? "从第" : "在第"}
-              suffix={plan.mode === "minutes" ? "分开始" : "分"}
-              min={0}
-              max={plan.mode === "minutes" ? plan.every - 1 : 59}
-              precision={0}
-              hideButtons
-              style={{ width: plan.mode === "minutes" ? 136 : 112 }}
-              onNumberChange={(v) => update({ ...plan, minute: clampMinute(v, plan.mode === "minutes" ? plan.every - 1 : 59) })}
-            />
+            <InputGroup variant="secondary" className={plan.mode === "minutes" ? "w-36" : "w-32"}>
+              <InputGroup.Prefix className="text-xs text-muted">
+                {plan.mode === "minutes" ? "从第" : "在第"}
+              </InputGroup.Prefix>
+              <InputGroup.Input
+                aria-label={`${label} 分钟偏移`}
+                type="number"
+                min={0}
+                max={maxMinute}
+                step={1}
+                disabled={disabled}
+                value={String(plan.minute)}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  update({ ...plan, minute: e.target.value === "" ? 0 : clampMinute(n) })
+                }}
+                className="num text-center"
+              />
+              <InputGroup.Suffix className="text-xs text-muted">
+                {plan.mode === "minutes" ? "分开始" : "分"}
+              </InputGroup.Suffix>
+            </InputGroup>
           ) : null}
         </div>
       ) : null}
+
       {plan.mode === "daily" || plan.mode === "weekly" ? (
-        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <TimePicker value={time} format="HH:mm" disabled={disabled} showClear={false} insetLabel="在" style={{ width: 112 }} onChange={setTime} />
+        <div className="row flex-wrap gap-2">
+          <TimeField
+            aria-label={`${label} 执行时间`}
+            hourCycle={24}
+            granularity="minute"
+            isDisabled={disabled}
+            value={new Time(plan.hour, plan.minute)}
+            onChange={(t) => {
+              if (t) update({ ...plan, hour: t.hour, minute: t.minute })
+            }}
+            className="w-28"
+          >
+            <TimeField.Group variant="secondary">
+              <TimeField.Prefix className="text-xs text-muted">在</TimeField.Prefix>
+              <TimeField.Input>{(segment) => <TimeField.Segment segment={segment} />}</TimeField.Input>
+            </TimeField.Group>
+          </TimeField>
+
           {plan.mode === "weekly" ? (
             <Select
-              multiple
-              value={plan.days}
-              disabled={disabled}
-              style={{ flex: 1, minWidth: 150 }}
-              optionList={weekdays.map((d) => ({ value: d.value, label: `周${d.label}` }))}
-              // 至少留一天，全取消就不是“每周”了
-              onChange={(v) => Array.isArray(v) && v.length > 0 && update({ ...plan, days: v.map(Number) })}
-            />
+              variant="secondary"
+              aria-label={`${label} 星期`}
+              selectionMode="multiple"
+              value={plan.days.map(String)}
+              isDisabled={disabled}
+              onChange={(keys) => {
+                // 至少留一天，全取消就不是“每周”了
+                if (Array.isArray(keys) && keys.length > 0) {
+                  update({ ...plan, days: keys.map(Number) })
+                }
+              }}
+              className="min-w-[150px] flex-1"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {weekdays.map((d) => (
+                    <ListBox.Item key={d.value} id={String(d.value)} textValue={`周${d.label}`}>
+                      周{d.label}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
           ) : null}
         </div>
       ) : null}
+
       {plan.mode === "custom" ? (
-        <Input
+        <TextField
+          variant="secondary"
+          aria-label={`${label} Cron 表达式`}
+          fullWidth
           value={plan.custom}
-          disabled={disabled}
-          className="mono"
-          placeholder="秒 分 时 日 月 周，例如 0 */15 * * * *"
+          isDisabled={disabled}
           onChange={(v) => update({ ...plan, custom: v })}
-        />
+        >
+          <Input className="mono text-xs" placeholder="秒 分 时 日 月 周，例如 0 */15 * * * *" />
+        </TextField>
       ) : null}
-      {plan.mode === "custom" && description ? (
-        <Typography.Text type="tertiary" size="small">
-          {description}
-        </Typography.Text>
-      ) : null}
-      <Typography.Text type={error ? "danger" : "tertiary"} size="small">
-        {preview}
-      </Typography.Text>
+
+      {plan.mode === "custom" && description ? <Description>{description}</Description> : null}
+      <Description className={error ? "text-danger" : undefined}>{preview}</Description>
+      {extraText ? <Description className="text-warning">{extraText}</Description> : null}
     </div>
   )
 }
-
-/** 设置页表单里用的版本，和 Form.Input 一样接 field、label、extraText */
-export const FormCronPicker = withField(CronPicker, { valueKey: "value", onKeyChangeFnName: "onChange", shouldMemo: false })

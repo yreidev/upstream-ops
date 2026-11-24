@@ -1,25 +1,32 @@
 import { useEffect, useMemo, useState } from "react"
 import {
-  Banner,
+  Alert,
   Button,
   Card,
   Checkbox,
-  Empty,
+  Description,
+  EmptyState,
   Input,
+  Label,
+  ListBox,
   Modal,
-  Radio,
-  RadioGroup,
+  ScrollShadow,
   Select,
-  Spin,
+  Separator,
+  Spinner,
+  Surface,
   Switch,
-  Typography,
-} from "@douyinfe/semi-ui"
-import { IconDelete, IconPlus } from "@douyinfe/semi-icons"
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@heroui/react"
+import { Plus, TrashBin } from "@gravity-ui/icons"
 import { apiFetch } from "@/lib/api"
 import type { NotificationChannel, NotificationChannelType, NotificationEvent } from "@/lib/api-types"
 import { useChannels, useMultiChannelRates } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
 import { FormError } from "@/components/common/form-error"
+import { PasswordInput } from "@/components/common/password-input"
 
 interface ConfigState {
   // telegram
@@ -60,8 +67,6 @@ const notificationEventOptions: Array<{ id: string; label: string; events: Notif
   { id: "captcha_failed", label: "验证码失败", events: ["captcha_failed"] },
   { id: "monitor_failed", label: "采集失败", events: ["monitor_failed"] },
   { id: "recovered", label: "故障恢复", events: ["recovered"] },
-  { id: "cch_sync", label: "CCH 倍率同步", events: ["cch_sync"] },
-  { id: "degrade", label: "降智检测", events: ["degrade"] },
 ]
 
 const allNotificationEvents = Array.from(new Set(notificationEventOptions.flatMap((option) => option.events)))
@@ -115,23 +120,12 @@ function buildConfigByType(type: NotificationChannelType, cfg: ConfigState): str
   }
 }
 
-function FieldLabel({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 4 }}>
-      <Typography.Text strong size="small">
-        {children}
-      </Typography.Text>
-      {extra ? (
-        <Typography.Text type="tertiary" size="small" style={{ marginLeft: 8 }}>
-          {extra}
-        </Typography.Text>
-      ) : null}
-    </div>
-  )
-}
-
 /** 新增或编辑通知渠道。channel 为空时是新增。 */
-export function NotificationFormModal({ visible, onClose, channel }: {
+export function NotificationFormModal({
+  visible,
+  onClose,
+  channel,
+}: {
   visible: boolean
   onClose: () => void
   channel?: NotificationChannel | null
@@ -237,97 +231,183 @@ export function NotificationFormModal({ visible, onClose, channel }: {
   const configHint = isEdit ? "编辑时留空保留原值" : undefined
 
   return (
-    <Modal
-      visible={visible}
-      title={isEdit ? "编辑通知渠道" : "新增通知渠道"}
-      onCancel={onClose}
-      onOk={handleOk}
-      okText="保存"
-      confirmLoading={submitting}
-      width={720}
-      bodyStyle={{ maxHeight: "70vh", overflowY: "auto" }}
+    <Modal.Backdrop
+      isOpen={visible}
+      isDismissable={!submitting}
+      isKeyboardDismissDisabled={submitting}
+      onOpenChange={(open) => !open && !submitting && onClose()}
     >
-      <div className="stack" style={{ gap: 14 }}>
-        <div>
-          <FieldLabel>渠道名</FieldLabel>
-          <Input placeholder="例如：TG-运维群" value={form.name} onChange={(v) => setForm({ ...form, name: v })} disabled={submitting} />
-        </div>
-        <div>
-          <FieldLabel extra={isEdit ? "类型创建后不可修改" : undefined}>类型</FieldLabel>
-          <Select
-            value={form.type}
-            onChange={(v) => setForm({ ...form, type: v as NotificationChannelType, cfg: emptyConfig() })}
-            disabled={isEdit || submitting}
-            style={{ width: "100%" }}
-            optionList={[
-              { value: "telegram", label: "Telegram" },
-              { value: "wecom", label: "企业微信" },
-            ]}
-          />
-        </div>
+      <Modal.Container size="lg" scroll="inside" className="w-[min(720px,calc(100vw-24px))] max-w-none">
+        <Modal.Dialog className="w-full max-w-none">
+          <Modal.CloseTrigger isDisabled={submitting} />
+          <Modal.Header>
+            <Modal.Heading>{isEdit ? "编辑通知渠道" : "新增通知渠道"}</Modal.Heading>
+          </Modal.Header>
+          <Modal.Body className="max-h-[70vh] overflow-y-auto">
+            <div className="stack gap-3.5">
+              <TextField
+                variant="secondary"
+                fullWidth
+                isRequired
+                isDisabled={submitting}
+                value={form.name}
+                onChange={(v) => setForm({ ...form, name: v })}
+              >
+                <Label>渠道名</Label>
+                <Input placeholder="例如：TG-运维群" />
+              </TextField>
 
-        {form.type === "telegram" ? (
-          <>
-            <div>
-              <FieldLabel extra={configHint}>Bot Token</FieldLabel>
-              <Input mode="password" placeholder="123456:ABC-..." value={form.cfg.bot_token} onChange={(v) => updateCfg({ bot_token: v })} disabled={submitting} />
-            </div>
-            <div>
-              <FieldLabel extra={configHint}>Chat ID</FieldLabel>
-              <Input placeholder="-1001234567890 或 @channelname" value={form.cfg.chat_id} onChange={(v) => updateCfg({ chat_id: v })} disabled={submitting} />
-            </div>
-          </>
-        ) : (
-          <div>
-            <FieldLabel extra={configHint}>Webhook URL</FieldLabel>
-            <Input mode="password" value={form.cfg.webhook_url} onChange={(v) => updateCfg({ webhook_url: v })} disabled={submitting} />
-          </div>
-        )}
+              <Select
+                variant="secondary"
+                fullWidth
+                value={form.type}
+                onChange={(k) => k != null && setForm({ ...form, type: String(k) as NotificationChannelType, cfg: emptyConfig() })}
+                isDisabled={isEdit || submitting}
+              >
+                <Label>类型</Label>
+                <Select.Trigger>
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover>
+                  <ListBox>
+                    <ListBox.Item id="telegram" textValue="Telegram">
+                      Telegram
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                    <ListBox.Item id="wecom" textValue="企业微信">
+                      企业微信
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  </ListBox>
+                </Select.Popover>
+                {isEdit ? <Description>类型创建后不可修改</Description> : null}
+              </Select>
 
-        <div className="row-between">
-          <div className="stack" style={{ gap: 0 }}>
-            <Typography.Text strong size="small">启用</Typography.Text>
-            <Typography.Text type="tertiary" size="small">关闭后不会向此渠道推送</Typography.Text>
-          </div>
-          <Switch checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} disabled={submitting} />
-        </div>
+              {form.type === "telegram" ? (
+                <>
+                  <TextField
+                    variant="secondary"
+                    fullWidth
+                    isRequired={!isEdit}
+                    isDisabled={submitting}
+                    value={form.cfg.bot_token}
+                    onChange={(v) => updateCfg({ bot_token: v })}
+                  >
+                    <Label>Bot Token</Label>
+                    <PasswordInput variant="secondary" fullWidth placeholder="123456:ABC-..." />
+                    {configHint ? <Description>{configHint}</Description> : null}
+                  </TextField>
+                  <TextField
+                    variant="secondary"
+                    fullWidth
+                    isRequired={!isEdit}
+                    isDisabled={submitting}
+                    value={form.cfg.chat_id}
+                    onChange={(v) => updateCfg({ chat_id: v })}
+                  >
+                    <Label>Chat ID</Label>
+                    <Input placeholder="-1001234567890 或 @channelname" />
+                    {configHint ? <Description>{configHint}</Description> : null}
+                  </TextField>
+                </>
+              ) : (
+                <TextField
+                  variant="secondary"
+                  fullWidth
+                  isRequired={!isEdit}
+                  isDisabled={submitting}
+                  value={form.cfg.webhook_url}
+                  onChange={(v) => updateCfg({ webhook_url: v })}
+                >
+                  <Label>Webhook URL</Label>
+                  <PasswordInput variant="secondary" fullWidth />
+                  {configHint ? <Description>{configHint}</Description> : null}
+                </TextField>
+              )}
 
-        <div>
-          <div className="row-between" style={{ marginBottom: 8 }}>
-            <div className="stack" style={{ gap: 0 }}>
-              <Typography.Text strong size="small">订阅规则</Typography.Text>
-              <Typography.Text type="tertiary" size="small">不加规则 = 收到所有渠道的所有事件；加了规则后只收命中的</Typography.Text>
+              <Surface variant="secondary" className="rounded-xl p-3">
+                <Switch
+                  isSelected={form.enabled}
+                  onChange={(v) => setForm({ ...form, enabled: v })}
+                  isDisabled={submitting}
+                  className="w-full justify-between"
+                >
+                  <Switch.Content className="w-full justify-between">
+                    <div className="stack gap-0.5">
+                      <Label className="text-sm font-medium">启用</Label>
+                      <Description className="text-xs">关闭后不会向此渠道推送</Description>
+                    </div>
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch.Content>
+                </Switch>
+              </Surface>
+
+              <Separator />
+
+              <div className="stack gap-2.5">
+                <div className="row-between">
+                  <div className="stack gap-0.5">
+                    <Label className="text-sm font-medium">订阅规则</Label>
+                    <Description className="text-xs">不加规则 = 收到所有渠道的所有事件；加了规则后只收命中的</Description>
+                  </div>
+                  <Button size="sm" variant="secondary" onPress={addSub} isDisabled={submitting}>
+                    <Plus className="size-3.5" />
+                    添加
+                  </Button>
+                </div>
+                {form.subs.length === 0 ? (
+                  <Alert status="accent">
+                    <Alert.Indicator />
+                    <Alert.Content>
+                      <Alert.Description>暂无订阅规则，所有事件都会收到。</Alert.Description>
+                    </Alert.Content>
+                  </Alert>
+                ) : (
+                  <div className="stack gap-2.5">
+                    {form.subs.map((row, idx) => (
+                      <SubRowEditor
+                        key={idx}
+                        index={idx}
+                        row={row}
+                        channels={channelOptions}
+                        onChange={(patch) => updateSub(idx, patch)}
+                        onRemove={() => removeSub(idx)}
+                        disabled={submitting}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <FormError message={error} />
             </div>
-            <Button size="small" icon={<IconPlus />} onClick={addSub} disabled={submitting}>
-              添加
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="tertiary" isDisabled={submitting} onPress={onClose}>
+              取消
             </Button>
-          </div>
-          {form.subs.length === 0 ? (
-            <Banner fullMode={false} type="info" closeIcon={null} description="暂无订阅规则，所有事件都会收到。" />
-          ) : (
-            <div className="stack" style={{ gap: 10 }}>
-              {form.subs.map((row, idx) => (
-                <SubRowEditor
-                  key={idx}
-                  index={idx}
-                  row={row}
-                  channels={channelOptions}
-                  onChange={(patch) => updateSub(idx, patch)}
-                  onRemove={() => removeSub(idx)}
-                  disabled={submitting}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <FormError message={error} />
-      </div>
-    </Modal>
+            <Button variant="primary" isPending={submitting} onPress={() => void handleOk()}>
+              {submitting ? <Spinner size="sm" color="current" /> : null}
+              保存
+            </Button>
+          </Modal.Footer>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   )
 }
 
-function SubRowEditor({ index, row, channels, onChange, onRemove, disabled }: {
+function SubRowEditor({
+  index,
+  row,
+  channels,
+  onChange,
+  onRemove,
+  disabled,
+}: {
   index: number
   row: SubRow
   channels: Array<{ id: number; name: string }>
@@ -377,166 +457,228 @@ function SubRowEditor({ index, row, channels, onChange, onRemove, disabled }: {
   }
 
   return (
-    <Card
-      bodyStyle={{ padding: 12 }}
-      title={<Typography.Text strong size="small">规则 {index + 1}</Typography.Text>}
-      headerStyle={{ padding: "8px 12px" }}
-      headerExtraContent={
-        <Button theme="borderless" type="danger" size="small" icon={<IconDelete />} onClick={onRemove} disabled={disabled} aria-label="删除规则" />
-      }
-    >
-      <div className="stack" style={{ gap: 12 }}>
-        <div>
-          <FieldLabel extra={`已选 ${effectiveChannelIDs.length}/${channels.length}`}>渠道</FieldLabel>
+    <Card variant="secondary" className="rounded-2xl p-3.5">
+      <Card.Header className="flex-row items-center justify-between gap-2 pb-2">
+        <Card.Title className="text-xs font-semibold">规则 {index + 1}</Card.Title>
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          aria-label="删除规则"
+          className="text-danger"
+          isDisabled={disabled}
+          onPress={onRemove}
+        >
+          <TrashBin className="size-4" />
+        </Button>
+      </Card.Header>
+      <Separator />
+      <Card.Content className="stack gap-3 pt-3">
+        <div className="stack gap-1.5">
+          <div className="row gap-2">
+            <Label className="text-xs">渠道</Label>
+            <Description className="text-xs">
+              已选 {effectiveChannelIDs.length}/{channels.length}
+            </Description>
+          </div>
           <Checkbox
-            checked={row.all_channels}
-            onChange={(e) => onChange({ all_channels: !!e.target.checked, channel_ids: e.target.checked ? channels.map((c) => c.id) : [] })}
-            disabled={disabled}
-            style={{ marginBottom: 6 }}
+            isSelected={row.all_channels}
+            onChange={(checked) =>
+              onChange({ all_channels: checked, channel_ids: checked ? channels.map((c) => c.id) : [] })
+            }
+            isDisabled={disabled}
           >
-            全部渠道（含之后新增的）
+            <Checkbox.Content>
+              <Checkbox.Control>
+                <Checkbox.Indicator />
+              </Checkbox.Control>
+              <Label className="text-sm font-normal">全部渠道（含之后新增的）</Label>
+            </Checkbox.Content>
           </Checkbox>
-          {row.all_channels ? null : (
+          {!row.all_channels ? (
             <Select
-              multiple
-              filter
-              maxTagCount={4}
+              aria-label="选择订阅渠道"
+              selectionMode="multiple"
+              fullWidth
               placeholder="选择渠道"
-              value={row.channel_ids}
-              onChange={(v) => onChange({ channel_ids: (v as number[]) ?? [], all_channels: false })}
-              disabled={disabled}
-              style={{ width: "100%" }}
-              optionList={channels.map((c) => ({ value: c.id, label: c.name }))}
-              emptyContent="暂无可选渠道"
-            />
-          )}
+              value={row.channel_ids.map(String)}
+              onChange={(keys) => {
+                const list = Array.isArray(keys) ? keys.map((k) => Number(k)).filter(Number.isFinite) : []
+                onChange({ channel_ids: list, all_channels: false })
+              }}
+              isDisabled={disabled}
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox renderEmptyState={() => <div className="px-3 py-2 text-xs text-muted">暂无可选渠道</div>}>
+                  {channels.map((c) => (
+                    <ListBox.Item key={c.id} id={String(c.id)} textValue={c.name}>
+                      {c.name}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+          ) : null}
         </div>
 
-        <div>
-          <FieldLabel>事件</FieldLabel>
-          <RadioGroup
-            value={row.event_mode}
-            onChange={(e) => {
-              const eventMode = e.target.value as "all" | "custom"
+        <div className="stack gap-1.5">
+          <Label className="text-xs">事件</Label>
+          <ToggleButtonGroup
+            aria-label="事件范围"
+            selectionMode="single"
+            disallowEmptySelection
+            selectedKeys={new Set([row.event_mode])}
+            onSelectionChange={(keys) => {
+              const first = [...keys][0]
+              if (first == null) return
+              const eventMode = String(first) as "all" | "custom"
               onChange({ event_mode: eventMode, events: eventMode === "all" ? [] : row.events })
             }}
-            disabled={disabled}
+            isDisabled={disabled}
+            size="sm"
           >
-            <Radio value="all">全部事件</Radio>
-            <Radio value="custom">指定事件</Radio>
-          </RadioGroup>
+            <ToggleButton id="all">全部事件</ToggleButton>
+            <ToggleButton id="custom">指定事件</ToggleButton>
+          </ToggleButtonGroup>
+
           {row.event_mode === "custom" ? (
-            <div style={{ marginTop: 8 }}>
-              <div className="row-between" style={{ marginBottom: 6 }}>
+            <Surface className="mt-1 rounded-xl border border-separator p-2.5">
+              <div className="row-between mb-1.5">
                 <Checkbox
-                  checked={allEventsSelected}
-                  indeterminate={row.events.length > 0 && !allEventsSelected}
-                  onChange={(e) => onChange({ events: e.target.checked ? allNotificationEvents : [] })}
-                  disabled={disabled}
+                  isSelected={allEventsSelected}
+                  isIndeterminate={row.events.length > 0 && !allEventsSelected}
+                  onChange={(checked) => onChange({ events: checked ? allNotificationEvents : [] })}
+                  isDisabled={disabled}
                 >
-                  全选事件
+                  <Checkbox.Content>
+                    <Checkbox.Control>
+                      <Checkbox.Indicator />
+                    </Checkbox.Control>
+                    <Label className="text-xs font-medium">全选事件</Label>
+                  </Checkbox.Content>
                 </Checkbox>
-                <Typography.Text type="tertiary" size="small">
+                <span className="num text-xs text-muted">
                   已选 {selectedEventCount}/{notificationEventOptions.length}
-                </Typography.Text>
+                </span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 6 }}>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 {notificationEventOptions.map((option) => {
                   const matched = option.events.filter((e) => row.events.includes(e)).length
                   return (
                     <Checkbox
                       key={option.id}
-                      checked={matched === option.events.length}
-                      indeterminate={matched > 0 && matched < option.events.length}
-                      onChange={(e) => toggleEventOption(option.events, !!e.target.checked)}
-                      disabled={disabled}
+                      isSelected={matched === option.events.length}
+                      isIndeterminate={matched > 0 && matched < option.events.length}
+                      onChange={(checked) => toggleEventOption(option.events, checked)}
+                      isDisabled={disabled}
                     >
-                      {option.label}
+                      <Checkbox.Content>
+                        <Checkbox.Control>
+                          <Checkbox.Indicator />
+                        </Checkbox.Control>
+                        <Label className="text-xs font-normal">{option.label}</Label>
+                      </Checkbox.Content>
                     </Checkbox>
                   )
                 })}
               </div>
-            </div>
+            </Surface>
           ) : null}
         </div>
 
         {showRateGroupFilter ? (
-          <div>
-            <FieldLabel extra="只影响倍率类事件">倍率分组</FieldLabel>
-            <RadioGroup
-              value={row.mode}
-              onChange={(e) => onChange({ mode: e.target.value as "all" | "groups", groups: [] })}
-              disabled={disabled}
+          <div className="stack gap-1.5">
+            <div className="row gap-2">
+              <Label className="text-xs">倍率分组</Label>
+              <Description className="text-xs">只影响倍率类事件</Description>
+            </div>
+            <ToggleButtonGroup
+              aria-label="倍率分组范围"
+              selectionMode="single"
+              disallowEmptySelection
+              selectedKeys={new Set([row.mode])}
+              onSelectionChange={(keys) => {
+                const first = [...keys][0]
+                if (first != null) onChange({ mode: String(first) as "all" | "groups", groups: [] })
+              }}
+              isDisabled={disabled}
+              size="sm"
             >
-              <Radio value="all">所有分组</Radio>
-              <Radio value="groups">指定分组</Radio>
-            </RadioGroup>
+              <ToggleButton id="all">所有分组</ToggleButton>
+              <ToggleButton id="groups">指定分组</ToggleButton>
+            </ToggleButtonGroup>
+
             {row.mode === "groups" ? (
-              <div style={{ marginTop: 8 }}>
+              <div className="mt-1">
                 {effectiveChannelIDs.length === 0 ? (
-                  <Typography.Text type="tertiary" size="small">请先选择渠道</Typography.Text>
+                  <span className="text-xs text-muted">请先选择渠道</span>
                 ) : rates.loading ? (
-                  <Spin size="small" />
+                  <Spinner size="sm" />
                 ) : groupNames.length === 0 ? (
-                  <Empty description="所选渠道还没采集到分组，先去渠道页同步一次" />
+                  <EmptyState className="py-4 text-xs text-muted">
+                    所选渠道还没采集到分组，先去渠道页同步一次
+                  </EmptyState>
                 ) : (
-                  <>
-                    <div className="row-between" style={{ marginBottom: 6 }}>
+                  <Surface className="rounded-xl border border-separator p-2.5">
+                    <div className="row-between mb-1.5">
                       <Checkbox
-                        checked={selectedGroupCount === groupNames.length}
-                        indeterminate={selectedGroupCount > 0 && selectedGroupCount < groupNames.length}
-                        onChange={(e) => onChange({ groups: e.target.checked ? groupNames : [] })}
-                        disabled={disabled}
+                        isSelected={selectedGroupCount === groupNames.length}
+                        isIndeterminate={selectedGroupCount > 0 && selectedGroupCount < groupNames.length}
+                        onChange={(checked) => onChange({ groups: checked ? groupNames : [] })}
+                        isDisabled={disabled}
                       >
-                        全选
+                        <Checkbox.Content>
+                          <Checkbox.Control>
+                            <Checkbox.Indicator />
+                          </Checkbox.Control>
+                          <Label className="text-xs font-medium">全选</Label>
+                        </Checkbox.Content>
                       </Checkbox>
-                      <Typography.Text type="tertiary" size="small">
+                      <span className="num text-xs text-muted">
                         已选 {selectedGroupCount}/{groupNames.length}
-                      </Typography.Text>
+                      </span>
                     </div>
-                    <div
-                      className="stack"
-                      style={{
-                        gap: 8,
-                        maxHeight: 256,
-                        overflowY: "auto",
-                        padding: 8,
-                        borderRadius: 6,
-                        background: "var(--semi-color-fill-0)",
-                      }}
-                    >
+                    <ScrollShadow className="stack max-h-60 gap-2 pr-1">
                       {groupsByChannel.map(({ channelId, channelName, groups }) => (
                         <div key={channelId}>
-                          <Typography.Text type="tertiary" size="small">
-                            {channelName}
-                          </Typography.Text>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 4, marginTop: 4 }}>
+                          <span className="text-xs font-medium text-muted">{channelName}</span>
+                          <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
                             {groups.map((name) => (
                               <Checkbox
                                 key={name}
-                                checked={row.groups.includes(name)}
-                                onChange={(e) => toggleGroup(name, !!e.target.checked)}
-                                disabled={disabled}
+                                isSelected={row.groups.includes(name)}
+                                onChange={(checked) => toggleGroup(name, checked)}
+                                isDisabled={disabled}
                               >
-                                <span className="truncate">{name}</span>
+                                <Checkbox.Content className="min-w-0">
+                                  <Checkbox.Control>
+                                    <Checkbox.Indicator />
+                                  </Checkbox.Control>
+                                  <span className="truncate text-xs" title={name}>
+                                    {name}
+                                  </span>
+                                </Checkbox.Content>
                               </Checkbox>
                             ))}
                           </div>
                         </div>
                       ))}
-                    </div>
-                  </>
+                    </ScrollShadow>
+                  </Surface>
                 )}
                 {row.groups.length === 0 && effectiveChannelIDs.length > 0 && groupNames.length > 0 ? (
-                  <Typography.Text type="warning" size="small">
-                    没勾任何分组，倍率类事件不会命中
-                  </Typography.Text>
+                  <span className="mt-1 block text-xs text-warning">没勾任何分组，倍率类事件不会命中</span>
                 ) : null}
               </div>
             ) : null}
           </div>
         ) : null}
-      </div>
+      </Card.Content>
     </Card>
   )
 }

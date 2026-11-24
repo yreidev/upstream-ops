@@ -1,4 +1,3 @@
-import { Modal } from "@douyinfe/semi-ui"
 import type { ReactNode } from "react"
 
 export interface ConfirmOptions {
@@ -9,6 +8,19 @@ export interface ConfirmOptions {
   destructive?: boolean
 }
 
+export interface ConfirmRequest {
+  options: ConfirmOptions
+  resolve: (confirmed: boolean) => void
+}
+
+let currentRequest: ConfirmRequest | null = null
+const queue: ConfirmRequest[] = []
+const listeners = new Set<() => void>()
+
+function emit() {
+  listeners.forEach((fn) => fn())
+}
+
 /**
  * confirm 弹出确认框，用户点确认时得到 true，取消或关闭时得到 false。
  *
@@ -16,16 +28,30 @@ export interface ConfirmOptions {
  */
 export function confirm(opts: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    Modal.confirm({
-      title: opts.title,
-      content: opts.description,
-      okText: opts.confirmLabel ?? "确认",
-      cancelText: opts.cancelLabel ?? "取消",
-      okButtonProps: opts.destructive ? { type: "danger" } : undefined,
-      // 密钥抽屉的层级是 1010，确认框要盖在它上面
-      zIndex: 1050,
-      onOk: () => resolve(true),
-      onCancel: () => resolve(false),
-    })
+    const req: ConfirmRequest = { options: opts, resolve }
+    if (!currentRequest) {
+      currentRequest = req
+      emit()
+    } else {
+      queue.push(req)
+    }
   })
+}
+
+export function getConfirmSnapshot(): ConfirmRequest | null {
+  return currentRequest
+}
+
+export function subscribeConfirm(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function settleConfirm(confirmed: boolean) {
+  const req = currentRequest
+  currentRequest = queue.shift() ?? null
+  emit()
+  req?.resolve(confirmed)
 }

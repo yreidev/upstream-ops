@@ -1,27 +1,40 @@
-import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import {
-  Banner,
+  Alert,
   Button,
+  Chip,
+  Description,
+  Drawer,
+  EmptyState,
   Input,
-  Radio,
+  Label,
+  ListBox,
+  SearchField,
   Select,
-  SideSheet,
+  Spinner,
+  Surface,
   Switch,
   Table,
-  Tag,
   TextArea,
-  Toast,
+  TextField,
   Tooltip,
-  Typography,
-} from "@douyinfe/semi-ui"
-import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
-import type { TagColor } from "@douyinfe/semi-ui/lib/es/tag"
-import { IconCopy, IconDelete, IconEdit, IconExternalOpen, IconPlus, IconPriceTag, IconRefresh, IconSearch } from "@douyinfe/semi-icons"
+  toast,
+} from "@heroui/react"
+import {
+  ArrowUpRightFromSquare,
+  ArrowsRotateRight,
+  Check,
+  Copy,
+  Pencil,
+  Plus,
+  Tag,
+  TrashBin,
+} from "@gravity-ui/icons"
 import { apiFetch } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 import { confirm } from "@/lib/confirm"
 import { channelTypeLabel, dateTime, decimal, formatRatio } from "@/lib/format"
-import { apiKeyStatusMeta } from "@/lib/labels"
+import { apiKeyStatusMeta, type ChipColor } from "@/lib/labels"
 import type {
   Channel,
   ChannelAPIKey,
@@ -34,6 +47,7 @@ import type {
 } from "@/lib/api-types"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { FormError } from "@/components/common/form-error"
+import { PaginationBar } from "@/components/common/pagination-bar"
 
 export interface ChannelAPIKeyTargetGroup {
   id: number | null
@@ -211,17 +225,26 @@ function localDateTimeToISO(value: string): string | undefined {
   return d.toISOString()
 }
 
-/** “密钥”列平时的宽度，够放打码后的密钥。 */
-const KEY_COL_WIDTH = 200
-
 function maskKey(key: string) {
   if (!key) return "—"
   if (key.length <= 12) return key
   return `${key.slice(0, 8)}…${key.slice(-6)}`
 }
 
+const statusFilterOptions: { value: ChannelAPIKeyStatus | "all"; label: string }[] = [
+  { value: "all", label: "全部状态" },
+  { value: "active", label: "启用" },
+  { value: "disabled", label: "停用" },
+  { value: "expired", label: "已过期" },
+  { value: "quota_exhausted", label: "额度耗尽" },
+]
+
 /** 渠道在上游的 API 密钥：列表、新建、编辑、删除、迁移分组、一键把名称改成分组名。channel 为空时不显示。 */
-export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
+export function ChannelAPIKeysSheet({
+  channel,
+  initialAction,
+  onClose,
+}: {
   channel: Channel | null
   initialAction?: ChannelAPIKeyInitialAction
   onClose: () => void
@@ -458,10 +481,10 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
         if (created?.key) {
           if (created.id) setRevealedKeys((prev) => ({ ...prev, [created.id]: created.key }))
           copyText(created.key)
-            .then(() => Toast.success("密钥已创建并复制"))
+            .then(() => toast.success("密钥已创建并复制"))
             .catch((err: Error) => {
-              Toast.success("密钥已创建")
-              Toast.error(err?.message || "自动复制失败，请手动复制")
+              toast.success("密钥已创建")
+              toast.danger(err?.message || "自动复制失败，请手动复制")
             })
         }
       } else if (editing) {
@@ -469,7 +492,7 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
           method: "PUT",
           body: JSON.stringify(payload),
         })
-        Toast.success("密钥已更新")
+        toast.success("密钥已更新")
       }
       setMode("list")
       setEditing(null)
@@ -503,7 +526,7 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
         method: "PUT",
         body: JSON.stringify(payload),
       })
-      Toast.success(`密钥“${selectedKey.name || selectedKey.id}”已从“${sourceGroup}”迁到“${liveTargetGroup.name}”`)
+      toast.success(`密钥“${selectedKey.name || selectedKey.id}”已从“${sourceGroup}”迁到“${liveTargetGroup.name}”`)
       onClose()
     } catch (e) {
       setError((e as Error).message || "迁移密钥失败")
@@ -531,16 +554,25 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
     try {
       await revealKey(key)
     } catch (e) {
-      Toast.error((e as Error).message || "获取完整密钥失败")
+      toast.danger((e as Error).message || "获取完整密钥失败")
     }
   }
 
   async function revealAndCopy(key: ChannelAPIKey) {
     try {
       await copyText(await revealKey(key))
-      Toast.success("已复制")
+      toast.success("已复制")
     } catch (e) {
-      Toast.error((e as Error).message || "获取完整密钥失败")
+      toast.danger((e as Error).message || "获取完整密钥失败")
+    }
+  }
+
+  async function copyQuickText(text: string, label = "已复制") {
+    try {
+      await copyText(text)
+      toast.success(label)
+    } catch (e) {
+      toast.danger((e as Error).message || "复制失败")
     }
   }
 
@@ -555,10 +587,10 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
     if (!ok) return
     try {
       await apiFetch(`/channels/${channel.id}/api-keys/${key.id}`, { method: "DELETE" })
-      Toast.success("密钥已删除")
+      toast.success("密钥已删除")
       reload()
     } catch (e) {
-      Toast.error((e as Error).message || "删除密钥失败")
+      toast.danger((e as Error).message || "删除密钥失败")
     }
   }
 
@@ -577,26 +609,18 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
       if (res.unchanged > 0) parts.push(`${res.unchanged} 个本来就同名`)
       if (res.skipped.length > 0) parts.push(`跳过 ${res.skipped.length} 个`)
       if (res.failed.length > 0) parts.push(`${res.failed.length} 个修改失败`)
-      // 有失败时只弹一条错误提示，不再同时弹“已改名 0 个”的成功提示
-      const content = (
-        <div className="stack" style={{ gap: 4 }}>
-          <span>{parts.join("，")}</span>
-          {res.failed.length > 0 ? (
-            <span className="pre-wrap" style={{ fontSize: 12 }}>{`修改失败：\n${renameIssueText(res.failed)}`}</span>
-          ) : null}
-          {res.skipped.length > 0 ? (
-            <span className="pre-wrap" style={{ fontSize: 12 }}>{`跳过：\n${renameIssueText(res.skipped)}`}</span>
-          ) : null}
-        </div>
-      )
+      const details: string[] = []
+      if (res.failed.length > 0) details.push(`修改失败：\n${renameIssueText(res.failed)}`)
+      if (res.skipped.length > 0) details.push(`跳过：\n${renameIssueText(res.skipped)}`)
+      const description = details.length > 0 ? <span className="pre-wrap text-xs">{details.join("\n")}</span> : undefined
       if (res.failed.length > 0) {
-        Toast.error({ content, duration: 8 })
+        toast.danger(parts.join("，"), { description, timeout: 8000 })
       } else {
-        Toast.success({ content, duration: res.skipped.length > 0 ? 8 : 3 })
+        toast.success(parts.join("，"), { description, timeout: res.skipped.length > 0 ? 8000 : 3000 })
       }
       reload()
     } catch (e) {
-      Toast.error((e as Error).message || "修改密钥名称失败")
+      toast.danger((e as Error).message || "修改密钥名称失败")
     } finally {
       setRenaming(false)
     }
@@ -607,372 +631,497 @@ export function ChannelAPIKeysSheet({ channel, initialAction, onClose }: {
   const targetLocked = mode === "create" && actionType === "create" && targetGroup != null
   const title = isMigrate ? "迁移密钥" : mode === "create" ? "新建密钥" : mode === "edit" ? "编辑密钥" : "密钥管理"
 
-  // 点开完整密钥后“密钥”列按这一页最长的那把放宽，尽量一行显示（Sub2API 的密钥 67 个字符）
-  const revealedLen = isMigrate ? 0 : Math.max(0, ...items.map((k) => revealedKeys[k.id]?.length ?? 0))
-  const keyColWidth = revealedLen ? Math.min(Math.max(KEY_COL_WIDTH, Math.ceil(revealedLen * 7.3) + 56), 560) : KEY_COL_WIDTH
+  const disabledMigrateKeys = isMigrate
+    ? items
+        .filter(
+          (item) =>
+            groupsLoading ||
+            targetValidationError != null ||
+            Boolean(channel && targetGroup && keyMatchesGroup(item, channel, targetGroup)),
+        )
+        .map((item) => item.id)
+    : []
 
-  const columns: ColumnProps<ChannelAPIKey>[] = []
-  if (isMigrate) {
-    columns.push({
-      title: "",
-      key: "pick",
-      width: 48,
-      render: (_: unknown, item: ChannelAPIKey) => {
-        const isCurrentTarget = !!(channel && targetGroup && keyMatchesGroup(item, channel, targetGroup))
-        return (
-          <Radio
-            checked={selectedKey?.id === item.id}
-            disabled={isCurrentTarget || groupsLoading || targetValidationError != null}
-            onChange={() => setSelectedKey(item)}
-            aria-label={`选择 ${item.name || item.id}`}
-          />
-        )
-      },
-    })
-  }
-  columns.push(
-    { title: "名称", dataIndex: "name", width: 140, render: (v: string) => <Typography.Text strong>{v || "未命名"}</Typography.Text> },
-    {
-      title: "密钥",
-      key: "key",
-      width: keyColWidth,
-      render: (_: unknown, item: ChannelAPIKey) => {
-        if (isMigrate) return <span className="mono" style={{ fontSize: 12 }}>{maskKey(item.key)}</span>
-        const full = revealedKeys[item.id]
-        if (full) {
-          return (
-            <Typography.Text className="mono" size="small" copyable={{ content: full }} style={{ wordBreak: "break-all" }}>
-              {full}
-            </Typography.Text>
-          )
-        }
-        return (
-          <Tooltip content="点击显示完整密钥">
-            <Button
-              theme="borderless"
-              size="small"
-              loading={revealingID === item.id}
-              onClick={() => void revealAndShow(item)}
-              style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: 12, padding: "0 4px" }}
-            >
-              {maskKey(item.key)}
-            </Button>
-          </Tooltip>
-        )
-      },
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 80,
-      render: (v: string) => {
-        const meta = apiKeyStatusMeta[v] ?? { label: v || "未知", color: "grey" as TagColor }
-        return <Tag color={meta.color}>{meta.label}</Tag>
-      },
-    },
-    {
-      title: "分组",
-      key: "group",
-      render: (_: unknown, item: ChannelAPIKey) => {
-        const isCurrentTarget = !!(isMigrate && channel && targetGroup && keyMatchesGroup(item, channel, targetGroup))
-        // 分组名可以复制：有的站点只允许在网页上改密钥，复制过去当密钥名称用
-        const groupName = (item.group_name || item.group || "").trim()
-        return (
-          <div className="stack" style={{ gap: 2 }}>
-            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-              <Typography.Text size="small" strong copyable={!isMigrate && groupName ? { content: groupName, copyTip: "复制分组名" } : false}>
-                {isMigrate && channel ? sourceGroupLabel(item, channel, groups) : groupDisplayName(item)}
-              </Typography.Text>
-              {isCurrentTarget ? <Tag size="small">已在目标分组</Tag> : null}
-            </div>
-            <Typography.Text type="tertiary" size="small">
-              {item.group_description || "无描述"}
-              {item.group_ratio > 0 ? ` · 倍率 ${formatRatio(item.group_ratio)}` : ""}
-            </Typography.Text>
-          </div>
-        )
-      },
-    },
-    {
-      title: "额度",
-      key: "quota",
-      width: 110,
-      render: (_: unknown, item: ChannelAPIKey) => (
-        <span className="num">
-          {isNewAPI
-            ? item.unlimited_quota
-              ? "无限"
-              : decimal(item.quota, 0)
-            : `${decimal(item.quota_used)}/${item.quota > 0 ? decimal(item.quota) : "无限"}`}
-        </span>
-      ),
-    },
-    {
-      title: "过期",
-      key: "expire",
-      width: 120,
-      render: (_: unknown, item: ChannelAPIKey) =>
-        isNewAPI
-          ? item.expired_time === -1 || !item.expired_time
-            ? "永不过期"
-            : dateTime(new Date(item.expired_time * 1000).toISOString())
-          : item.expires_at
-            ? dateTime(item.expires_at)
-            : "永不过期",
-    },
-  )
-  if (!isMigrate) {
-    columns.push({
-      title: "操作",
-      key: "actions",
-      width: 110,
-      fixed: isMobile ? undefined : "right",
-      render: (_: unknown, item: ChannelAPIKey) => (
-        <div className="row" style={{ gap: 2 }}>
-          <Tooltip content="复制完整密钥">
-            <Button theme="borderless" size="small" icon={<IconCopy />} loading={revealingID === item.id} onClick={() => void revealAndCopy(item)} aria-label="复制完整密钥" />
-          </Tooltip>
-          <Tooltip content="编辑">
-            <Button theme="borderless" size="small" icon={<IconEdit />} onClick={() => openEdit(item)} aria-label="编辑" />
-          </Tooltip>
-          <Tooltip content="删除">
-            <Button theme="borderless" type="danger" size="small" icon={<IconDelete />} onClick={() => void deleteKey(item)} aria-label="删除" />
-          </Tooltip>
-        </div>
-      ),
-    })
-  }
-
-  let footer: ReactNode = null
-  if (isMigrate) {
-    footer = (
-      <div className="row-between" style={{ width: "100%" }}>
-        <Typography.Text type="tertiary" size="small" className="truncate">
-          {selectedKey ? `已选择：${selectedKey.name || selectedKey.id}` : "选一个要迁移的密钥"}
-        </Typography.Text>
-        <div className="row">
-          <Button onClick={onClose} disabled={submitting}>
-            取消
-          </Button>
-          <Button
-            theme="solid"
-            loading={submitting}
-            disabled={groupsLoading || targetValidationError != null || selectedKey == null}
-            onClick={() => void migrateSelectedKey()}
-          >
-            迁移
-          </Button>
-        </div>
-      </div>
-    )
-  } else if (isForm) {
-    footer = (
-      <div className="row" style={{ justifyContent: "flex-end", width: "100%" }}>
-        <Button onClick={backToList} disabled={submitting}>
-          返回列表
-        </Button>
-        <Button theme="solid" loading={submitting} disabled={groupsLoading || targetValidationError != null} onClick={() => void handleSubmit()}>
-          {mode === "create" ? "创建" : "保存"}
-        </Button>
-      </div>
-    )
-  }
+  const drawerBusy = submitting || renaming
 
   return (
-    <SideSheet
-      visible={open}
-      onCancel={onClose}
-      title={
-        <div className="stack" style={{ gap: 2 }}>
-          <span>{title}</span>
-          {channel ? (
-            <Typography.Text type="tertiary" size="small" style={{ fontWeight: "normal" }}>
-              {channel.name} · {channelTypeLabel(channel.type)}
-              {initialAction ? ` · 目标分组 ${targetGroupName}` : ""}
-            </Typography.Text>
-          ) : null}
-        </div>
-      }
-      // 宽屏上放宽，但不铺满：太宽的表格反而难对齐着看
-      width={isMobile ? "100%" : "min(1400px, 90vw)"}
-      // 可能从“全部分组”弹窗里打开，要盖在弹窗上面
-      zIndex={1010}
-      footer={footer}
-      bodyStyle={{ paddingBottom: 16 }}
+    <Drawer.Backdrop
+      isOpen={open}
+      isDismissable={!drawerBusy}
+      isKeyboardDismissDisabled={drawerBusy}
+      onOpenChange={(nextOpen) => !nextOpen && !drawerBusy && onClose()}
     >
-      <div className="stack" style={{ gap: 12 }}>
-        {mode !== "list" && (groupsLoading || visibleGroupsError) ? (
-          <Banner
-            fullMode={false}
-            type={visibleGroupsError ? "danger" : "info"}
-            closeIcon={null}
-            description={
-              <div className="row-between">
-                <span>{groupsLoading ? "正在校验分组…" : visibleGroupsError}</span>
-                {visibleGroupsError ? (
-                  <Button size="small" icon={<IconRefresh />} onClick={() => setGroupsReloadTick((t) => t + 1)}>
-                    重试
-                  </Button>
-                ) : null}
-              </div>
-            }
-          />
-        ) : null}
-
-        {isForm ? (
-          <KeyFormFields
-            form={form}
-            setForm={setForm}
-            mode={mode}
-            isNewAPI={isNewAPI}
-            disabled={submitting}
-            groups={groups}
-            groupsLoading={groupsLoading}
-            groupLocked={targetLocked}
-          />
-        ) : (
-          <>
-            <div className="row-between" style={{ flexWrap: "wrap" }}>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                <Input
-                  prefix={<IconSearch />}
-                  value={searchInput}
-                  onChange={setSearchInput}
-                  showClear
-                  placeholder="搜索名称或密钥"
-                  style={{ width: isMobile ? "100%" : 240 }}
-                />
-                <Select
-                  value={status}
-                  onChange={(v) => {
-                    setStatus(v as ChannelAPIKeyStatus | "all")
-                    setPage(1)
-                  }}
-                  style={{ width: 120 }}
-                  optionList={[
-                    { value: "all", label: "全部状态" },
-                    { value: "active", label: "启用" },
-                    { value: "disabled", label: "停用" },
-                    { value: "expired", label: "已过期" },
-                    { value: "quota_exhausted", label: "额度耗尽" },
-                  ]}
-                />
-              </div>
-              {isMigrate ? (
-                <div className="row">
-                  <Typography.Text type="tertiary" size="small">
-                    迁移到
-                  </Typography.Text>
-                  <Tag color="blue">{liveTargetGroup?.name || targetGroupName}</Tag>
-                </div>
-              ) : (
-                <div className="row" style={{ flexWrap: "wrap" }}>
-                  <Tooltip content="在新标签页打开上游站点的密钥管理页">
-                    <Button icon={<IconExternalOpen />} disabled={!channel} onClick={() => channel && window.open(siteKeysURL(channel), "_blank", "noopener,noreferrer")}>
-                      打开站点密钥页
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content="把这个渠道全部密钥的名称改成各自所属的分组名">
-                    <Button icon={<IconPriceTag />} loading={renaming} disabled={loading || items.length === 0} onClick={() => void renameKeysToGroup()}>
-                      名称改为分组名
-                    </Button>
-                  </Tooltip>
-                  <Button theme="solid" icon={<IconPlus />} onClick={openCreate}>
-                    新建密钥
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {listError ? (
-              <Banner
-                fullMode={false}
-                type="danger"
-                closeIcon={null}
-                description={
-                  <div className="row-between">
-                    <span>{listError}</span>
-                    <Button size="small" onClick={reload}>
-                      重新加载
-                    </Button>
-                  </div>
-                }
-              />
+      <Drawer.Content placement="right">
+        <Drawer.Dialog className="w-full max-w-[min(1400px,92vw)] sm:w-[min(1400px,92vw)]">
+          <Drawer.CloseTrigger isDisabled={drawerBusy} />
+          <Drawer.Header className="flex flex-col items-start gap-0.5">
+            <Drawer.Heading>{title}</Drawer.Heading>
+            {channel ? (
+              <span className="text-xs font-normal text-muted">
+                {channel.name} · {channelTypeLabel(channel.type)}
+                {initialAction ? ` · 目标分组 ${targetGroupName}` : ""}
+              </span>
             ) : null}
-            {isMigrate && error ? <Banner fullMode={false} type="danger" closeIcon={null} description={error} /> : null}
+          </Drawer.Header>
+          <Drawer.Body className="pb-4">
+            <div className="stack gap-3">
+              {mode !== "list" && (groupsLoading || visibleGroupsError) ? (
+                <Alert status={visibleGroupsError ? "danger" : "accent"}>
+                  <Alert.Indicator />
+                  <Alert.Content>
+                    <div className="row-between gap-2">
+                      <Alert.Description>{groupsLoading ? "正在校验分组…" : visibleGroupsError}</Alert.Description>
+                      {visibleGroupsError ? (
+                        <Button size="sm" variant="secondary" onPress={() => setGroupsReloadTick((t) => t + 1)}>
+                          <ArrowsRotateRight className="size-3.5" />
+                          重试
+                        </Button>
+                      ) : null}
+                    </div>
+                  </Alert.Content>
+                </Alert>
+              ) : null}
 
-            <Table<ChannelAPIKey>
-              rowKey="id"
-              size="small"
-              columns={columns}
-              dataSource={items}
-              loading={loading}
-              scroll={{ x: 900 + keyColWidth - KEY_COL_WIDTH }}
-              empty="暂无密钥"
-              onRow={(item?: ChannelAPIKey) => {
-                if (!isMigrate || !item || !channel) return {}
-                const isCurrentTarget = !!(targetGroup && keyMatchesGroup(item, channel, targetGroup))
-                const disabled = isCurrentTarget || groupsLoading || targetValidationError != null
-                return {
-                  onClick: () => {
-                    if (!disabled) setSelectedKey(item)
-                  },
-                  style: { cursor: disabled ? "not-allowed" : "pointer", opacity: isCurrentTarget ? 0.6 : 1 },
-                }
-              }}
-              pagination={{
-                currentPage: page,
-                pageSize: PAGE_SIZE,
-                total: data?.total ?? 0,
-                onPageChange: setPage,
-                // 手机上用紧凑分页，放不下“显示第几条”
-                showTotal: !isMobile,
-                size: isMobile ? "small" : "default",
-              }}
-            />
-          </>
-        )}
+              {isForm ? (
+                <KeyFormFields
+                  form={form}
+                  setForm={setForm}
+                  mode={mode}
+                  isNewAPI={isNewAPI}
+                  disabled={submitting}
+                  groups={groups}
+                  groupsLoading={groupsLoading}
+                  groupLocked={targetLocked}
+                />
+              ) : (
+                <>
+                  <div className="row-between flex-wrap gap-2">
+                    <div className="row flex-wrap gap-2">
+                      <SearchField
+                        aria-label="搜索名称或密钥"
+                        variant="secondary"
+                        value={searchInput}
+                        onChange={setSearchInput}
+                        className={isMobile ? "w-full" : "w-60"}
+                      >
+                        <SearchField.Group>
+                          <SearchField.SearchIcon />
+                          <SearchField.Input placeholder="搜索名称或密钥" />
+                          <SearchField.ClearButton />
+                        </SearchField.Group>
+                      </SearchField>
+                      <Select
+                        aria-label="按密钥状态筛选"
+                        variant="secondary"
+                        value={status}
+                        onChange={(k) => {
+                          if (k != null) {
+                            setStatus(String(k) as ChannelAPIKeyStatus | "all")
+                            setPage(1)
+                          }
+                        }}
+                        className="w-32"
+                      >
+                        <Select.Trigger>
+                          <Select.Value />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                        <Select.Popover>
+                          <ListBox>
+                            {statusFilterOptions.map((o) => (
+                              <ListBox.Item key={o.value} id={o.value} textValue={o.label}>
+                                {o.label}
+                                <ListBox.ItemIndicator />
+                              </ListBox.Item>
+                            ))}
+                          </ListBox>
+                        </Select.Popover>
+                      </Select>
+                    </div>
 
-        <FormError message={isForm ? error : null} />
-      </div>
-    </SideSheet>
+                    {isMigrate ? (
+                      <div className="row">
+                        <span className="text-xs text-muted">迁移到</span>
+                        <Chip color="accent" variant="soft" size="sm">
+                          {liveTargetGroup?.name || targetGroupName}
+                        </Chip>
+                      </div>
+                    ) : (
+                      <div className="row flex-wrap gap-2">
+                        <Tooltip>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            isDisabled={!channel}
+                            onPress={() => channel && window.open(siteKeysURL(channel), "_blank", "noopener,noreferrer")}
+                          >
+                            <ArrowUpRightFromSquare className="size-4" />
+                            打开站点密钥页
+                          </Button>
+                          <Tooltip.Content>在新标签页打开上游站点的密钥管理页</Tooltip.Content>
+                        </Tooltip>
+                        <Tooltip>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            isPending={renaming}
+                            isDisabled={loading || items.length === 0}
+                            onPress={() => void renameKeysToGroup()}
+                          >
+                            {renaming ? <Spinner size="sm" color="current" /> : <Tag className="size-4" />}
+                            名称改为分组名
+                          </Button>
+                          <Tooltip.Content>把这个渠道全部密钥的名称改成各自所属的分组名</Tooltip.Content>
+                        </Tooltip>
+                        <Button size="sm" variant="primary" onPress={openCreate}>
+                          <Plus className="size-4" />
+                          新建密钥
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {listError ? (
+                    <Alert status="danger">
+                      <Alert.Indicator />
+                      <Alert.Content>
+                        <div className="row-between gap-2">
+                          <Alert.Description>{listError}</Alert.Description>
+                          <Button size="sm" variant="secondary" onPress={reload}>
+                            重新加载
+                          </Button>
+                        </div>
+                      </Alert.Content>
+                    </Alert>
+                  ) : null}
+                  {isMigrate && error ? (
+                    <Alert status="danger">
+                      <Alert.Indicator />
+                      <Alert.Content>
+                        <Alert.Description>{error}</Alert.Description>
+                      </Alert.Content>
+                    </Alert>
+                  ) : null}
+
+                  {loading ? (
+                    <div className="flex justify-center py-12">
+                      <Spinner />
+                    </div>
+                  ) : (
+                    <Table variant="secondary">
+                      <Table.ScrollContainer>
+                        <Table.Content
+                          aria-label="渠道 API 密钥列表"
+                          className="min-w-[820px]"
+                          selectionMode={isMigrate ? "single" : "none"}
+                          selectedKeys={isMigrate && selectedKey ? new Set([selectedKey.id]) : new Set()}
+                          disabledKeys={disabledMigrateKeys}
+                          onSelectionChange={(keys) => {
+                            if (!isMigrate || keys === "all") return
+                            const picked = [...keys][0]
+                            setSelectedKey(items.find((it) => it.id === Number(picked)) ?? null)
+                          }}
+                        >
+                          <Table.Header>
+                            {isMigrate ? (
+                              <Table.Column id="pick" className="w-12" aria-label="选择">
+                                选
+                              </Table.Column>
+                            ) : null}
+                            <Table.Column id="name" isRowHeader className="w-36">
+                              名称
+                            </Table.Column>
+                            <Table.Column id="key">密钥</Table.Column>
+                            <Table.Column id="status" className="w-24">
+                              状态
+                            </Table.Column>
+                            <Table.Column id="group">分组</Table.Column>
+                            <Table.Column id="quota" className="w-28">
+                              额度
+                            </Table.Column>
+                            <Table.Column id="expire" className="w-32">
+                              过期
+                            </Table.Column>
+                            {!isMigrate ? (
+                              <Table.Column id="actions" className="w-28">
+                                操作
+                              </Table.Column>
+                            ) : null}
+                          </Table.Header>
+                          <Table.Body
+                            items={items}
+                            renderEmptyState={() => (
+                              <EmptyState className="py-10 text-sm text-muted">暂无密钥</EmptyState>
+                            )}
+                          >
+                            {(item) => {
+                              const isCurrentTarget = !!(isMigrate && channel && targetGroup && keyMatchesGroup(item, channel, targetGroup))
+                              const picked = selectedKey?.id === item.id
+                              const full = revealedKeys[item.id]
+                              const statusMeta = apiKeyStatusMeta[item.status] ?? {
+                                label: item.status || "未知",
+                                color: "default" as ChipColor,
+                              }
+                              const groupName = (item.group_name || item.group || "").trim()
+                              const expireText = isNewAPI
+                                ? item.expired_time === -1 || !item.expired_time
+                                  ? "永不过期"
+                                  : dateTime(new Date(item.expired_time * 1000).toISOString())
+                                : item.expires_at
+                                  ? dateTime(item.expires_at)
+                                  : "永不过期"
+
+                              return (
+                                <Table.Row key={item.id} id={item.id}>
+                                  {isMigrate ? (
+                                    <Table.Cell>
+                                      <span
+                                        aria-hidden="true"
+                                        className={`inline-flex size-4 items-center justify-center rounded-full border transition-colors ${
+                                          picked
+                                            ? "border-accent bg-accent text-accent-foreground"
+                                            : "border-border bg-surface"
+                                        }`}
+                                      >
+                                        {picked ? <Check className="size-2.5" /> : null}
+                                      </span>
+                                    </Table.Cell>
+                                  ) : null}
+                                  <Table.Cell>
+                                    <span className="font-medium text-foreground">{item.name || "未命名"}</span>
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    {isMigrate ? (
+                                      <span className="mono text-xs text-muted">{maskKey(item.key)}</span>
+                                    ) : full ? (
+                                      <div className="row gap-1">
+                                        <span className="mono break-all text-xs text-foreground">{full}</span>
+                                        <Button
+                                          isIconOnly
+                                          size="sm"
+                                          variant="ghost"
+                                          aria-label="复制完整密钥"
+                                          onPress={() => void copyQuickText(full)}
+                                        >
+                                          <Copy className="size-3.5" />
+                                        </Button>
+                                      </div>
+                                    ) : (
+                                      <Tooltip>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          isPending={revealingID === item.id}
+                                          onPress={() => void revealAndShow(item)}
+                                          className="mono h-7 px-1.5 text-xs font-normal"
+                                        >
+                                          {revealingID === item.id ? <Spinner size="sm" color="current" /> : null}
+                                          {maskKey(item.key)}
+                                        </Button>
+                                        <Tooltip.Content>点击显示完整密钥</Tooltip.Content>
+                                      </Tooltip>
+                                    )}
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <Chip color={statusMeta.color} variant="soft" size="sm">
+                                      {statusMeta.label}
+                                    </Chip>
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <div className="stack gap-0.5">
+                                      <div className="row flex-wrap gap-1.5">
+                                        <span className="text-xs font-semibold text-foreground">
+                                          {isMigrate && channel ? sourceGroupLabel(item, channel, groups) : groupDisplayName(item)}
+                                        </span>
+                                        {!isMigrate && groupName ? (
+                                          <Tooltip>
+                                            <Button
+                                              isIconOnly
+                                              size="sm"
+                                              variant="ghost"
+                                              aria-label="复制分组名"
+                                              className="size-6 min-w-0"
+                                              onPress={() => void copyQuickText(groupName, "已复制分组名")}
+                                            >
+                                              <Copy className="size-3" />
+                                            </Button>
+                                            <Tooltip.Content>复制分组名</Tooltip.Content>
+                                          </Tooltip>
+                                        ) : null}
+                                        {isCurrentTarget ? (
+                                          <Chip size="sm" variant="soft">
+                                            已在目标分组
+                                          </Chip>
+                                        ) : null}
+                                      </div>
+                                      <span className="text-xs text-muted">
+                                        {item.group_description || "无描述"}
+                                        {item.group_ratio > 0 ? ` · 倍率 ${formatRatio(item.group_ratio)}` : ""}
+                                      </span>
+                                    </div>
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <span className="num text-xs text-foreground">
+                                      {isNewAPI
+                                        ? item.unlimited_quota
+                                          ? "无限"
+                                          : decimal(item.quota, 0)
+                                        : `${decimal(item.quota_used)}/${item.quota > 0 ? decimal(item.quota) : "无限"}`}
+                                    </span>
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <span className="num text-xs text-muted">{expireText}</span>
+                                  </Table.Cell>
+                                  {!isMigrate ? (
+                                    <Table.Cell>
+                                      <div className="row gap-0.5">
+                                        <Tooltip>
+                                          <Button
+                                            isIconOnly
+                                            size="sm"
+                                            variant="ghost"
+                                            aria-label="复制完整密钥"
+                                            isPending={revealingID === item.id}
+                                            onPress={() => void revealAndCopy(item)}
+                                          >
+                                            {revealingID === item.id ? (
+                                              <Spinner size="sm" color="current" />
+                                            ) : (
+                                              <Copy className="size-4" />
+                                            )}
+                                          </Button>
+                                          <Tooltip.Content>复制完整密钥</Tooltip.Content>
+                                        </Tooltip>
+                                        <Tooltip>
+                                          <Button
+                                            isIconOnly
+                                            size="sm"
+                                            variant="ghost"
+                                            aria-label="编辑"
+                                            onPress={() => openEdit(item)}
+                                          >
+                                            <Pencil className="size-4" />
+                                          </Button>
+                                          <Tooltip.Content>编辑</Tooltip.Content>
+                                        </Tooltip>
+                                        <Tooltip>
+                                          <Button
+                                            isIconOnly
+                                            size="sm"
+                                            variant="ghost"
+                                            aria-label="删除"
+                                            className="text-danger"
+                                            onPress={() => void deleteKey(item)}
+                                          >
+                                            <TrashBin className="size-4" />
+                                          </Button>
+                                          <Tooltip.Content>删除</Tooltip.Content>
+                                        </Tooltip>
+                                      </div>
+                                    </Table.Cell>
+                                  ) : null}
+                                </Table.Row>
+                              )
+                            }}
+                          </Table.Body>
+                        </Table.Content>
+                      </Table.ScrollContainer>
+                      {(data?.total ?? 0) > PAGE_SIZE ? (
+                        <Table.Footer>
+                          <PaginationBar
+                            page={page}
+                            total={data?.total ?? 0}
+                            pageSize={PAGE_SIZE}
+                            onChange={setPage}
+                            compact={isMobile}
+                          />
+                        </Table.Footer>
+                      ) : null}
+                    </Table>
+                  )}
+                </>
+              )}
+
+              <FormError message={isForm ? error : null} />
+            </div>
+          </Drawer.Body>
+          {isMigrate ? (
+            <Drawer.Footer className="row-between w-full">
+              <span className="truncate text-xs text-muted">
+                {selectedKey ? `已选择：${selectedKey.name || selectedKey.id}` : "选一个要迁移的密钥"}
+              </span>
+              <div className="row shrink-0">
+                <Button variant="tertiary" isDisabled={submitting} onPress={onClose}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  isPending={submitting}
+                  isDisabled={groupsLoading || targetValidationError != null || selectedKey == null}
+                  onPress={() => void migrateSelectedKey()}
+                >
+                  {submitting ? <Spinner size="sm" color="current" /> : null}
+                  迁移
+                </Button>
+              </div>
+            </Drawer.Footer>
+          ) : isForm ? (
+            <Drawer.Footer className="flex justify-end gap-2">
+              <Button variant="tertiary" isDisabled={submitting} onPress={backToList}>
+                返回列表
+              </Button>
+              <Button
+                variant="primary"
+                isPending={submitting}
+                isDisabled={groupsLoading || targetValidationError != null}
+                onPress={() => void handleSubmit()}
+              >
+                {submitting ? <Spinner size="sm" color="current" /> : null}
+                {mode === "create" ? "创建" : "保存"}
+              </Button>
+            </Drawer.Footer>
+          ) : null}
+        </Drawer.Dialog>
+      </Drawer.Content>
+    </Drawer.Backdrop>
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="stack" style={{ gap: 4 }}>
-      <Typography.Text strong size="small">
-        {label}
-      </Typography.Text>
-      {children}
-      {hint ? (
-        <Typography.Text type="tertiary" size="small">
-          {hint}
-        </Typography.Text>
-      ) : null}
-    </div>
-  )
-}
-
-function SwitchField({ label, checked, disabled, onChange }: {
+function SwitchField({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
   label: string
   checked: boolean
   disabled?: boolean
   onChange: (checked: boolean) => void
 }) {
   return (
-    <div
-      className="row-between"
-      style={{ padding: "8px 12px", border: "1px solid var(--semi-color-border)", borderRadius: 6, alignSelf: "end" }}
-    >
-      <Typography.Text>{label}</Typography.Text>
-      <Switch checked={checked} disabled={disabled} onChange={onChange} />
-    </div>
+    <Surface variant="secondary" className="self-end rounded-xl px-3 py-2.5">
+      <Switch isSelected={checked} isDisabled={disabled} onChange={onChange} className="w-full">
+        <Switch.Content className="w-full justify-between">
+          <Label className="text-sm text-foreground">{label}</Label>
+          <Switch.Control>
+            <Switch.Thumb />
+          </Switch.Control>
+        </Switch.Content>
+      </Switch>
+    </Surface>
   )
 }
 
-function GroupSelect({ value, onChange, groups, byID, disabled, loading }: {
+function GroupSelect({
+  label,
+  value,
+  onChange,
+  groups,
+  byID,
+  disabled,
+  loading,
+}: {
+  label: string
   value: string
   onChange: (v: string) => void
   groups: ChannelAPIKeyGroup[]
@@ -983,44 +1132,61 @@ function GroupSelect({ value, onChange, groups, byID, disabled, loading }: {
   const options = byID ? groups.filter((g) => g.id != null) : groups
   const selected = options.find((g) => (byID ? String(g.id) : g.name) === value)
   return (
-    <>
-      <Select
-        value={value || undefined}
-        onChange={(v) => onChange(String(v ?? ""))}
-        disabled={disabled || loading}
-        placeholder={loading ? "加载中…" : "选择分组"}
-        filter
-        style={{ width: "100%" }}
-        dropdownStyle={{ maxWidth: 420 }}
-      >
-        {options.map((g) => {
-          const v = byID ? String(g.id) : g.name
-          return (
-            <Select.Option key={v} value={v} label={`${g.name} · ${formatRatio(g.ratio)}`}>
-              <div className="stack" style={{ gap: 0 }}>
-                <span>
-                  {g.name} · {formatRatio(g.ratio)}
-                </span>
-                <Typography.Text type="tertiary" size="small" style={{ whiteSpace: "normal" }}>
-                  {g.description || "无描述"}
-                </Typography.Text>
-              </div>
-            </Select.Option>
-          )
-        })}
-      </Select>
+    <Select
+      variant="secondary"
+      fullWidth
+      value={value || null}
+      onChange={(k) => onChange(k == null ? "" : String(k))}
+      isDisabled={disabled || loading}
+      placeholder={loading ? "加载中…" : "选择分组"}
+    >
+      <Label>{label}</Label>
+      <Select.Trigger>
+        <Select.Value>
+          {({ isPlaceholder, defaultChildren }) =>
+            isPlaceholder || !selected ? defaultChildren : `${selected.name} · ${formatRatio(selected.ratio)}`
+          }
+        </Select.Value>
+        <Select.Indicator />
+      </Select.Trigger>
       {selected ? (
-        <Typography.Text type="tertiary" size="small">
+        <Description>
           {selected.description || "无描述"} · 倍率 {formatRatio(selected.ratio)}
-        </Typography.Text>
+        </Description>
       ) : null}
-    </>
+      <Select.Popover className="max-w-[420px]">
+        <ListBox renderEmptyState={() => <div className="px-3 py-2 text-xs text-muted">暂无分组</div>}>
+          {options.map((g) => {
+            const v = byID ? String(g.id) : g.name
+            const text = `${g.name} · ${formatRatio(g.ratio)}`
+            return (
+              <ListBox.Item key={v} id={v} textValue={text}>
+                <div className="stack gap-0">
+                  <span className="text-sm">{text}</span>
+                  <span className="whitespace-normal text-xs text-muted">{g.description || "无描述"}</span>
+                </div>
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+            )
+          })}
+        </ListBox>
+      </Select.Popover>
+    </Select>
   )
 }
 
-const formGrid = { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" } as const
+const formGridClass = "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
 
-function KeyFormFields({ form, setForm, mode, isNewAPI, disabled, groups, groupsLoading, groupLocked }: {
+function KeyFormFields({
+  form,
+  setForm,
+  mode,
+  isNewAPI,
+  disabled,
+  groups,
+  groupsLoading,
+  groupLocked,
+}: {
   form: KeyForm
   setForm: Dispatch<SetStateAction<KeyForm>>
   mode: Mode
@@ -1033,100 +1199,129 @@ function KeyFormFields({ form, setForm, mode, isNewAPI, disabled, groups, groups
   const set = <K extends keyof KeyForm>(k: K) => (v: KeyForm[K]) => setForm((f) => ({ ...f, [k]: v }))
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <div style={formGrid}>
-        <Field label="名称">
-          <Input value={form.name} onChange={set("name")} disabled={disabled} />
-        </Field>
+    <div className="stack gap-4">
+      <div className={formGridClass}>
+        <TextField variant="secondary" fullWidth value={form.name} onChange={set("name")} isDisabled={disabled} isRequired>
+          <Label>名称</Label>
+          <Input />
+        </TextField>
+
         {mode === "create" ? (
-          <Field label="自定义密钥">
-            <Input value={form.custom_key} onChange={set("custom_key")} placeholder="留空由上游生成" disabled={disabled} />
-          </Field>
+          <TextField variant="secondary" fullWidth value={form.custom_key} onChange={set("custom_key")} isDisabled={disabled}>
+            <Label>自定义密钥</Label>
+            <Input placeholder="留空由上游生成" />
+          </TextField>
         ) : (
-          <Field label="状态">
-            <Select
-              value={form.status}
-              onChange={(v) => set("status")(v as KeyForm["status"])}
-              disabled={disabled}
-              style={{ width: "100%" }}
-              optionList={[
-                { value: "active", label: "启用" },
-                { value: "disabled", label: "停用" },
-              ]}
-            />
-          </Field>
+          <Select
+            variant="secondary"
+            fullWidth
+            value={form.status}
+            onChange={(k) => k != null && set("status")(String(k) as KeyForm["status"])}
+            isDisabled={disabled}
+          >
+            <Label>状态</Label>
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                <ListBox.Item id="active" textValue="启用">
+                  启用
+                  <ListBox.ItemIndicator />
+                </ListBox.Item>
+                <ListBox.Item id="disabled" textValue="停用">
+                  停用
+                  <ListBox.ItemIndicator />
+                </ListBox.Item>
+              </ListBox>
+            </Select.Popover>
+          </Select>
         )}
-        <Field label={isNewAPI ? "分组" : "分组 ID"}>
-          <GroupSelect
-            value={isNewAPI ? form.group : form.group_id}
-            onChange={isNewAPI ? set("group") : set("group_id")}
-            groups={groups}
-            byID={!isNewAPI}
-            disabled={disabled || groupLocked}
-            loading={groupsLoading}
-          />
-        </Field>
+
+        <GroupSelect
+          label={isNewAPI ? "分组" : "分组 ID"}
+          value={isNewAPI ? form.group : form.group_id}
+          onChange={isNewAPI ? set("group") : set("group_id")}
+          groups={groups}
+          byID={!isNewAPI}
+          disabled={disabled || groupLocked}
+          loading={groupsLoading}
+        />
       </div>
 
       {isNewAPI ? (
         <>
-          <div style={formGrid}>
-            <Field label="剩余额度">
-              <Input value={form.remain_quota} onChange={set("remain_quota")} disabled={disabled} inputMode="numeric" />
-            </Field>
-            <Field label="过期时间戳" hint="Unix 秒，-1 表示永不过期。">
-              <Input value={form.expired_time} onChange={set("expired_time")} disabled={disabled} inputMode="numeric" />
-            </Field>
+          <div className={formGridClass}>
+            <TextField variant="secondary" fullWidth value={form.remain_quota} onChange={set("remain_quota")} isDisabled={disabled}>
+              <Label>剩余额度</Label>
+              <Input inputMode="numeric" />
+            </TextField>
+            <TextField variant="secondary" fullWidth value={form.expired_time} onChange={set("expired_time")} isDisabled={disabled}>
+              <Label>过期时间戳</Label>
+              <Input inputMode="numeric" />
+              <Description>Unix 秒，-1 表示永不过期。</Description>
+            </TextField>
           </div>
-          <div style={formGrid}>
+          <div className={formGridClass}>
             <SwitchField label="无限额度" checked={form.unlimited_quota} disabled={disabled} onChange={set("unlimited_quota")} />
             <SwitchField label="启用模型限制" checked={form.model_limits_enabled} disabled={disabled} onChange={set("model_limits_enabled")} />
             <SwitchField label="跨分组重试" checked={form.cross_group_retry} disabled={disabled} onChange={set("cross_group_retry")} />
           </div>
-          <div style={formGrid}>
-            <Field label="模型限制">
-              <TextArea value={form.model_limits} onChange={set("model_limits")} placeholder="逗号分隔" rows={3} disabled={disabled} />
-            </Field>
-            <Field label="允许 IP">
-              <TextArea value={form.allow_ips} onChange={set("allow_ips")} placeholder="每行一个 IP" rows={3} disabled={disabled} />
-            </Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <TextField variant="secondary" fullWidth value={form.model_limits} onChange={set("model_limits")} isDisabled={disabled}>
+              <Label>模型限制</Label>
+              <TextArea placeholder="逗号分隔" rows={3} />
+            </TextField>
+            <TextField variant="secondary" fullWidth value={form.allow_ips} onChange={set("allow_ips")} isDisabled={disabled}>
+              <Label>允许 IP</Label>
+              <TextArea placeholder="每行一个 IP" rows={3} />
+            </TextField>
           </div>
         </>
       ) : (
         <>
-          <div style={formGrid}>
-            <Field label="额度（USD）">
-              <Input value={form.quota} onChange={set("quota")} disabled={disabled} inputMode="decimal" />
-            </Field>
+          <div className={formGridClass}>
+            <TextField variant="secondary" fullWidth value={form.quota} onChange={set("quota")} isDisabled={disabled}>
+              <Label>额度（USD）</Label>
+              <Input inputMode="decimal" />
+            </TextField>
             {mode === "create" ? (
-              <Field label="过期天数">
-                <Input value={form.expires_in_days} onChange={set("expires_in_days")} placeholder="留空永不过期" disabled={disabled} inputMode="numeric" />
-              </Field>
+              <TextField variant="secondary" fullWidth value={form.expires_in_days} onChange={set("expires_in_days")} isDisabled={disabled}>
+                <Label>过期天数</Label>
+                <Input placeholder="留空永不过期" inputMode="numeric" />
+              </TextField>
             ) : (
-              <Field label="过期时间">
-                <Input type="datetime-local" value={form.expires_at} onChange={set("expires_at")} disabled={disabled} />
-              </Field>
+              <TextField variant="secondary" fullWidth value={form.expires_at} onChange={set("expires_at")} isDisabled={disabled}>
+                <Label>过期时间</Label>
+                <Input type="datetime-local" />
+              </TextField>
             )}
-            <Field label="5 小时限额">
-              <Input value={form.rate_limit_5h} onChange={set("rate_limit_5h")} disabled={disabled} inputMode="decimal" />
-            </Field>
-            <Field label="1 天限额">
-              <Input value={form.rate_limit_1d} onChange={set("rate_limit_1d")} disabled={disabled} inputMode="decimal" />
-            </Field>
-            <Field label="7 天限额">
-              <Input value={form.rate_limit_7d} onChange={set("rate_limit_7d")} disabled={disabled} inputMode="decimal" />
-            </Field>
+            <TextField variant="secondary" fullWidth value={form.rate_limit_5h} onChange={set("rate_limit_5h")} isDisabled={disabled}>
+              <Label>5 小时限额</Label>
+              <Input inputMode="decimal" />
+            </TextField>
+            <TextField variant="secondary" fullWidth value={form.rate_limit_1d} onChange={set("rate_limit_1d")} isDisabled={disabled}>
+              <Label>1 天限额</Label>
+              <Input inputMode="decimal" />
+            </TextField>
+            <TextField variant="secondary" fullWidth value={form.rate_limit_7d} onChange={set("rate_limit_7d")} isDisabled={disabled}>
+              <Label>7 天限额</Label>
+              <Input inputMode="decimal" />
+            </TextField>
           </div>
-          <div style={formGrid}>
-            <Field label="IP 白名单">
-              <TextArea value={form.ip_whitelist} onChange={set("ip_whitelist")} placeholder="每行一个 IP 或 CIDR" rows={3} disabled={disabled} />
-            </Field>
-            <Field label="IP 黑名单">
-              <TextArea value={form.ip_blacklist} onChange={set("ip_blacklist")} placeholder="每行一个 IP 或 CIDR" rows={3} disabled={disabled} />
-            </Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <TextField variant="secondary" fullWidth value={form.ip_whitelist} onChange={set("ip_whitelist")} isDisabled={disabled}>
+              <Label>IP 白名单</Label>
+              <TextArea placeholder="每行一个 IP 或 CIDR" rows={3} />
+            </TextField>
+            <TextField variant="secondary" fullWidth value={form.ip_blacklist} onChange={set("ip_blacklist")} isDisabled={disabled}>
+              <Label>IP 黑名单</Label>
+              <TextArea placeholder="每行一个 IP 或 CIDR" rows={3} />
+            </TextField>
           </div>
           {mode === "edit" ? (
-            <div style={formGrid}>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <SwitchField label="重置额度" checked={form.reset_quota} disabled={disabled} onChange={set("reset_quota")} />
               <SwitchField label="重置限额用量" checked={form.reset_rate_limit_usage} disabled={disabled} onChange={set("reset_rate_limit_usage")} />
             </div>

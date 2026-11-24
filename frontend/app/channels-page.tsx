@@ -1,40 +1,45 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
-  Banner,
+  Alert,
   Button,
   Card,
+  Chip,
+  Disclosure,
   Dropdown,
-  Empty,
-  Input,
-  Pagination,
+  EmptyState,
+  Label,
+  ListBox,
+  SearchField,
   Select,
-  Table,
+  Separator,
+  Spinner,
+  Surface,
   Tag,
-  Toast,
+  TagGroup,
   Tooltip,
-  Typography,
-} from "@douyinfe/semi-ui"
-import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
-import { IllustrationNoContent, IllustrationNoContentDark, IllustrationNoResult, IllustrationNoResultDark } from "@douyinfe/semi-illustrations"
+  toast,
+} from "@heroui/react"
 import {
-  IconClear,
-  IconCreditCard,
-  IconDelete,
-  IconEdit,
-  IconExternalOpen,
-  IconFilter,
-  IconGift,
-  IconKey,
-  IconList,
-  IconMore,
-  IconPause,
-  IconPlay,
-  IconPlus,
-  IconRefresh,
-  IconSearch,
-  IconUser,
-} from "@douyinfe/semi-icons"
+  ArrowUpRightFromSquare,
+  ArrowsRotateRight,
+  ChevronDown,
+  ChevronRight,
+  CreditCard,
+  Ellipsis,
+  Eraser,
+  Key,
+  ListUl,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Server,
+  Sliders,
+  Ticket,
+  TrashBin,
+} from "@gravity-ui/icons"
 import { PageHeader } from "@/components/layout/page-header"
+import { PaginationBar } from "@/components/common/pagination-bar"
 import { AllGroupsModal } from "@/components/channels/all-groups-modal"
 import { ChannelAPIKeysSheet, type ChannelAPIKeyInitialAction } from "@/components/channels/channel-api-keys-sheet"
 import { ChannelFormModal } from "@/components/channels/channel-form-modal"
@@ -52,7 +57,14 @@ import {
 import { ChannelRechargeModal } from "@/components/channels/channel-recharge-modal"
 import { ChannelRedeemModal } from "@/components/channels/channel-redeem-modal"
 import { apiFetch } from "@/lib/api"
-import type { BackgroundJob, Channel, ChannelListOrder, ChannelListSort, ChannelListStatus, ProgressEvent } from "@/lib/api-types"
+import type {
+  BackgroundJob,
+  Channel,
+  ChannelListOrder,
+  ChannelListSort,
+  ChannelListStatus,
+  ProgressEvent,
+} from "@/lib/api-types"
 import { channelTagKey } from "@/lib/channel-tags"
 import { confirm } from "@/lib/confirm"
 import { channelTypeLabel, fullDateTime, money, relativeTime } from "@/lib/format"
@@ -122,6 +134,8 @@ interface APIKeySheetState {
   initialAction?: ChannelAPIKeyInitialAction
 }
 
+const DESKTOP_GRID = "grid grid-cols-[24px_minmax(136px,1.4fr)_70px_104px_104px_80px_60px_170px] items-center gap-1.5"
+
 /** 渠道列表：搜索、筛选、排序和分页都在后端做，跨页结果才准确。 */
 export default function ChannelsPage() {
   const isMobile = useIsMobile()
@@ -129,7 +143,9 @@ export default function ChannelsPage() {
   const refresh = useTriggerRefresh()
 
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<ChannelPageSize>(() => loadStored(PAGE_SIZE_STORAGE_KEY, pageSizeOptions, DEFAULT_PAGE_SIZE))
+  const [pageSize, setPageSize] = useState<ChannelPageSize>(() =>
+    loadStored(PAGE_SIZE_STORAGE_KEY, pageSizeOptions, DEFAULT_PAGE_SIZE),
+  )
   // searchInput 是输入框的即时值，search 是停顿后真正拿去查的值
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
@@ -273,6 +289,10 @@ export default function ChannelsPage() {
     setExpandedKeys((keys) => (keys.includes(id) ? keys : [...keys, id]))
   }
 
+  function toggleRow(id: number) {
+    setExpandedKeys((keys) => (keys.includes(id) ? keys.filter((k) => k !== id) : [...keys, id]))
+  }
+
   async function followChannelJob(job: BackgroundJob) {
     const id = job.channel_id
     if (!id || watching.current.has(job.id)) return
@@ -307,7 +327,7 @@ export default function ChannelsPage() {
     expandRow(channel.id)
     try {
       const { job, started } = await startJob(`/channels/${channel.id}/sync`)
-      if (!started) Toast.info(`${channel.name} 已有任务在跑（${job.title}），显示它的进度`)
+      if (!started) toast.info(`${channel.name} 已有任务在跑（${job.title}），显示它的进度`)
       await followChannelJob(job)
     } catch (e) {
       patchSync(channel.id, (prev) => ({
@@ -358,8 +378,8 @@ export default function ChannelsPage() {
     setBulkSync((prev) => ({ ...prev, running: true }))
     try {
       const done = await watchJob(job.id, applyBulkJob, signal)
-      if (done.status === "succeeded") Toast.success(done.message || "全部同步完成")
-      else Toast.error(done.message || "全部同步失败")
+      if (done.status === "succeeded") toast.success(done.message || "全部同步完成")
+      else toast.danger(done.message || "全部同步失败")
       // 成功和跳过的行 5 秒后收起，失败的留着
       const lastByChannel = new Map<number, ProgressEvent>()
       for (const ev of done.events ?? []) if (ev.channel_id) lastByChannel.set(ev.channel_id, ev)
@@ -367,7 +387,7 @@ export default function ChannelsPage() {
       refresh()
     } catch (e) {
       if (isAbort(e, signal)) return
-      Toast.error(`查不到全部同步的进度：${(e as Error).message}。任务仍在后台运行，可到“后台任务”页查看结果`)
+      toast.danger(`查不到全部同步的进度：${(e as Error).message}。任务仍在后台运行，可到“后台任务”页查看结果`)
     } finally {
       watching.current.delete(job.id)
       if (!signal?.aborted) setBulkSync((prev) => ({ ...prev, running: false }))
@@ -381,10 +401,10 @@ export default function ChannelsPage() {
     setBulkSync({ running: true, completed: 0, total: list.length })
     try {
       const { job, started } = await startJob("/channels/sync-all")
-      if (!started) Toast.info("全部同步已经在跑，显示它的进度")
+      if (!started) toast.info("全部同步已经在跑，显示它的进度")
       await followBulkJob(job)
     } catch (e) {
-      Toast.error((e as Error).message || "全部同步失败")
+      toast.danger((e as Error).message || "全部同步失败")
       setBulkSync((prev) => ({ ...prev, running: false }))
     }
   }
@@ -395,7 +415,7 @@ export default function ChannelsPage() {
       await fn()
       refresh()
     } catch (e) {
-      Toast.error((e as Error).message || "操作失败")
+      toast.danger((e as Error).message || "操作失败")
     } finally {
       setBusyAction(null)
     }
@@ -407,7 +427,9 @@ export default function ChannelsPage() {
   }
 
   async function toggleMonitor(c: Channel) {
-    await withBusy(`toggle-${c.id}`, () => apiFetch(`/channels/${c.id}/${c.monitor_enabled ? "disable" : "enable"}`, { method: "POST" }))
+    await withBusy(`toggle-${c.id}`, () =>
+      apiFetch(`/channels/${c.id}/${c.monitor_enabled ? "disable" : "enable"}`, { method: "POST" }),
+    )
   }
 
   async function clearLoginInfo(c: Channel) {
@@ -420,7 +442,7 @@ export default function ChannelsPage() {
     if (!ok) return
     await withBusy(`clear-login-${c.id}`, async () => {
       await apiFetch(`/channels/${c.id}/clear-login-info`, { method: "POST" })
-      Toast.success("已清空登录信息")
+      toast.success("已清空登录信息")
     })
   }
 
@@ -446,57 +468,110 @@ export default function ChannelsPage() {
     const syncing = !!syncState[c.id]?.running
     const disabled = syncing || anySyncRunning
     const busy = busyAction?.endsWith(`-${c.id}`) ?? false
-    const button = (key: string, label: string, icon: ReactNode, onClick: () => void, opts: { disabled?: boolean; loading?: boolean } = {}) =>
+
+    const actionButton = (
+      key: string,
+      label: string,
+      icon: ReactNode,
+      onPress: () => void,
+      opts: { disabled?: boolean } = {},
+    ) =>
       compact ? (
-        <Button key={key} size="small" icon={icon} disabled={opts.disabled} loading={opts.loading} onClick={onClick}>
+        <Button key={key} size="sm" variant="tertiary" isDisabled={opts.disabled} onPress={onPress}>
+          {icon}
           {label}
         </Button>
       ) : (
-        <Tooltip key={key} content={label}>
-          <Button theme="borderless" size="small" icon={icon} disabled={opts.disabled} loading={opts.loading} onClick={onClick} aria-label={label} />
+        <Tooltip key={key}>
+          <Button
+            isIconOnly
+            variant="ghost"
+            size="sm"
+            isDisabled={opts.disabled}
+            onPress={onPress}
+            aria-label={label}
+          >
+            {icon}
+          </Button>
+          <Tooltip.Content>{label}</Tooltip.Content>
         </Tooltip>
       )
+
     return [
-      button("sync", "同步", <IconRefresh spin={syncing} />, () => void syncChannel(c), { disabled }),
-      button("groups", "分组", <IconList />, () => setGroupsOf(c)),
-      button("keys", "密钥", <IconKey />, () => setAPIKeySheet({ channel: c })),
-      button("edit", "编辑", <IconEdit />, () => openForm(c)),
-      <Dropdown
-        key="more"
-        position="bottomRight"
-        trigger="click"
-        clickToHide
-        render={
-          <Dropdown.Menu>
-            <Dropdown.Item icon={<IconCreditCard />} onClick={() => setRecharging(c)}>
-              充值
-            </Dropdown.Item>
-            <Dropdown.Item icon={<IconGift />} onClick={() => setRedeeming(c)}>
-              兑换码
-            </Dropdown.Item>
-            <Dropdown.Item icon={<IconExternalOpen />} onClick={() => window.open(c.site_url, "_blank", "noopener,noreferrer")}>
-              打开站点
-            </Dropdown.Item>
-            <Dropdown.Item icon={c.monitor_enabled ? <IconPause /> : <IconPlay />} onClick={() => void toggleMonitor(c)}>
-              {c.monitor_enabled ? "暂停监控" : "恢复监控"}
-            </Dropdown.Item>
-            <Dropdown.Divider />
-            <Dropdown.Item icon={<IconClear />} onClick={() => void clearLoginInfo(c)}>
-              清空登录信息
-            </Dropdown.Item>
-            <Dropdown.Item icon={<IconDelete />} type="danger" onClick={() => void deleteChannel(c)}>
-              删除
-            </Dropdown.Item>
-          </Dropdown.Menu>
-        }
-      >
+      actionButton(
+        "sync",
+        "同步",
+        <ArrowsRotateRight className={`size-4 ${syncing ? "animate-spin" : ""}`} />,
+        () => void syncChannel(c),
+        { disabled },
+      ),
+      actionButton("groups", "分组", <ListUl className="size-4" />, () => setGroupsOf(c)),
+      actionButton("keys", "密钥", <Key className="size-4" />, () => setAPIKeySheet({ channel: c })),
+      actionButton("edit", "编辑", <Pencil className="size-4" />, () => openForm(c)),
+      <Dropdown key="more">
         {compact ? (
-          <Button size="small" icon={<IconMore />} loading={busy}>
+          <Button size="sm" variant="tertiary" isPending={busy}>
+            {busy ? <Spinner size="sm" color="current" /> : <Ellipsis className="size-4" />}
             更多
           </Button>
         ) : (
-          <Button theme="borderless" size="small" icon={<IconMore />} loading={busy} aria-label="更多操作" />
+          <Button isIconOnly variant="ghost" size="sm" isPending={busy} aria-label="更多操作">
+            {busy ? <Spinner size="sm" color="current" /> : <Ellipsis className="size-4" />}
+          </Button>
         )}
+        <Dropdown.Popover placement="bottom end">
+          <Dropdown.Menu
+            aria-label={`${c.name} 更多操作`}
+            onAction={(key) => {
+              switch (key) {
+                case "recharge":
+                  setRecharging(c)
+                  break
+                case "redeem":
+                  setRedeeming(c)
+                  break
+                case "open-site":
+                  window.open(c.site_url, "_blank", "noopener,noreferrer")
+                  break
+                case "toggle-monitor":
+                  void toggleMonitor(c)
+                  break
+                case "clear-login":
+                  void clearLoginInfo(c)
+                  break
+                case "delete":
+                  void deleteChannel(c)
+                  break
+              }
+            }}
+          >
+            <Dropdown.Item id="recharge" textValue="充值">
+              <CreditCard className="size-4" />
+              <Label>充值</Label>
+            </Dropdown.Item>
+            <Dropdown.Item id="redeem" textValue="兑换码">
+              <Ticket className="size-4" />
+              <Label>兑换码</Label>
+            </Dropdown.Item>
+            <Dropdown.Item id="open-site" textValue="打开站点">
+              <ArrowUpRightFromSquare className="size-4" />
+              <Label>打开站点</Label>
+            </Dropdown.Item>
+            <Dropdown.Item id="toggle-monitor" textValue={c.monitor_enabled ? "暂停监控" : "恢复监控"}>
+              {c.monitor_enabled ? <Pause className="size-4" /> : <Play className="size-4" />}
+              <Label>{c.monitor_enabled ? "暂停监控" : "恢复监控"}</Label>
+            </Dropdown.Item>
+            <Separator />
+            <Dropdown.Item id="clear-login" textValue="清空登录信息">
+              <Eraser className="size-4" />
+              <Label>清空登录信息</Label>
+            </Dropdown.Item>
+            <Dropdown.Item id="delete" textValue="删除" variant="danger">
+              <TrashBin className="size-4" />
+              <Label>删除</Label>
+            </Dropdown.Item>
+          </Dropdown.Menu>
+        </Dropdown.Popover>
       </Dropdown>,
     ]
   }
@@ -504,119 +579,26 @@ export default function ChannelsPage() {
   function expandedContent(c: Channel) {
     const state = syncState[c.id]
     return (
-      // 表格有右侧固定列时，Semi 把展开行的外层设成横向 flex，不撑满就只有内容那么宽
-      <div className="stack" style={{ gap: 12, padding: "4px 0", flex: 1 }}>
+      <div className="stack gap-3">
         {state ? <SyncProgress state={state} /> : null}
         {c.last_error ? (
-          <Banner fullMode={false} type="danger" closeIcon={null} title="最近一次报错" description={<span className="pre-wrap">{c.last_error}</span>} />
+          <Alert status="danger">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>最近一次报错</Alert.Title>
+              <Alert.Description className="pre-wrap">{c.last_error}</Alert.Description>
+            </Alert.Content>
+          </Alert>
         ) : null}
         {c.notes ? (
-          <div>
-            <Typography.Text type="tertiary" size="small">
-              备注
-            </Typography.Text>
-            <Typography.Paragraph className="pre-wrap" style={{ margin: 0 }}>
-              {c.notes}
-            </Typography.Paragraph>
+          <div className="stack gap-0.5">
+            <span className="text-xs text-muted">备注</span>
+            <p className="pre-wrap m-0 text-sm text-foreground">{c.notes}</p>
           </div>
         ) : null}
       </div>
     )
   }
-
-  const columns: ColumnProps<Channel>[] = [
-    {
-      title: "渠道",
-      dataIndex: "name",
-      width: 260,
-      render: (_: unknown, c: Channel) => (
-        <div className="stack" style={{ gap: 2 }}>
-          <Typography.Text strong ellipsis={{ showTooltip: true }}>
-            {c.name}
-          </Typography.Text>
-          {/* 账号参与搜索和“账号 A→Z”排序，显示出来才看得出命中和排序依据；token 模式常为空 */}
-          {c.username.trim() ? (
-            <Typography.Text type="tertiary" size="small" icon={<IconUser size="small" />} ellipsis={{ showTooltip: true }}>
-              {c.username}
-            </Typography.Text>
-          ) : null}
-          {c.tags?.length ? (
-            <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-              {c.tags.map((tag) => (
-                <Tag key={tag} size="small" color="white">
-                  {tag}
-                </Tag>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      title: "类型",
-      dataIndex: "type",
-      width: 100,
-      render: (v: Channel["type"]) => <Tag color={v === "newapi" ? "violet" : "light-blue"}>{channelTypeLabel(v)}</Tag>,
-    },
-    {
-      title: "余额",
-      dataIndex: "last_balance",
-      width: 140,
-      render: (_: unknown, c: Channel) => (
-        <div className="stack" style={{ gap: 2 }}>
-          <Tooltip content={rechargeMultiplierTip(c)}>
-            <Typography.Text strong className="num">
-              {money(c.last_balance)}
-            </Typography.Text>
-          </Tooltip>
-          <Typography.Text type="tertiary" size="small">
-            {c.balance_threshold > 0 ? `低于 ${money(c.balance_threshold)} 告警` : "不告警"}
-          </Typography.Text>
-        </div>
-      ),
-    },
-    {
-      title: "今日 / 累计消费",
-      key: "cost",
-      width: 150,
-      render: (_: unknown, c: Channel) => (
-        <div className="stack num" style={{ gap: 2 }}>
-          <Typography.Text>{money(c.today_cost)}</Typography.Text>
-          <Typography.Text type="tertiary" size="small">
-            累计 {money(c.total_cost)}
-          </Typography.Text>
-        </div>
-      ),
-    },
-    {
-      title: "状态",
-      key: "status",
-      width: 150,
-      render: (_: unknown, c: Channel) => <ChannelStatusTags channel={c} sync={syncState[c.id]} />,
-    },
-    {
-      title: "更新",
-      key: "updated",
-      width: 110,
-      render: (_: unknown, c: Channel) => {
-        const at = c.last_balance_at ?? c.updated_at
-        return (
-          <Tooltip content={fullDateTime(at)}>
-            <Typography.Text type="tertiary" size="small">
-              {relativeTime(at)}
-            </Typography.Text>
-          </Tooltip>
-        )
-      },
-    },
-    {
-      title: "操作",
-      key: "actions",
-      width: 200,
-      fixed: "right",
-      render: (_: unknown, c: Channel) => <div className="row" style={{ gap: 0 }}>{actionsFor(c, false)}</div>,
-    },
-  ]
 
   const countText = filtersActive
     ? `筛选出 ${countsReady ? totalChannels : pageError ? "-" : "…"} 个 / 共 ${channels?.length ?? "-"} 个渠道`
@@ -626,50 +608,58 @@ export default function ChannelsPage() {
   if (channels?.length === 0) {
     // “还没有任何渠道”只看全量列表：分页结果可能还是上一组筛选条件的
     body = (
-      <Card>
-        <Empty
-          image={<IllustrationNoContent style={{ width: 150, height: 150 }} />}
-          darkModeImage={<IllustrationNoContentDark style={{ width: 150, height: 150 }} />}
-          title="还没有任何渠道"
-          description="添加一个上游账号，开启监控后会按计划自动登录、采集余额和倍率。"
-        >
-          <Button theme="solid" icon={<IconPlus />} onClick={() => openForm(null)}>
+      <Card className="rounded-2xl py-12">
+        <EmptyState className="flex flex-col items-center gap-3 text-center">
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-secondary text-muted">
+            <Server className="size-6" />
+          </div>
+          <div className="text-base font-semibold text-foreground">还没有任何渠道</div>
+          <div className="max-w-sm text-sm text-muted">
+            添加一个上游账号，开启监控后会按计划自动登录、采集余额和倍率。
+          </div>
+          <Button variant="primary" onPress={() => openForm(null)} className="mt-1">
+            <Plus className="size-4" />
             添加第一个渠道
           </Button>
-        </Empty>
+        </EmptyState>
       </Card>
     )
   } else if (pageError && (!channelPage || pageStale)) {
     body = (
-      <Card>
-        <Empty title="渠道列表加载失败" description={pageError}>
-          <Button icon={<IconRefresh />} onClick={pageQuery.refetch}>
+      <Card className="rounded-2xl py-12">
+        <EmptyState className="flex flex-col items-center gap-3 text-center">
+          <div className="text-base font-semibold text-foreground">渠道列表加载失败</div>
+          <div className="text-sm text-muted">{pageError}</div>
+          <Button variant="secondary" onPress={pageQuery.refetch}>
+            <ArrowsRotateRight className="size-4" />
             重试
           </Button>
-        </Empty>
+        </EmptyState>
       </Card>
     )
   } else if (countsReady && totalChannels === 0 && filtersActive) {
     body = (
-      <Card>
-        <Empty
-          image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-          darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
-          title="没有匹配的渠道"
-        >
-          <Button icon={<IconFilter />} onClick={clearFilters}>
+      <Card className="rounded-2xl py-12">
+        <EmptyState className="flex flex-col items-center gap-3 text-center">
+          <div className="text-base font-semibold text-foreground">没有匹配的渠道</div>
+          <Button variant="secondary" onPress={clearFilters}>
+            <Sliders className="size-4" />
             清除筛选
           </Button>
-        </Empty>
+        </EmptyState>
       </Card>
     )
   } else {
     // 未筛选却是 0 个而全量列表不为空（或还没到）：两次响应暂时不一致，当作加载中
-    const loading = !channelPage || (!countsReady && visibleChannels.length === 0) || (countsReady && totalChannels === 0 && !filtersActive)
+    const loading =
+      !channelPage || (!countsReady && visibleChannels.length === 0) || (countsReady && totalChannels === 0 && !filtersActive)
+
     const list = isMobile ? (
-      <div className="stack" style={{ gap: 12 }}>
+      <div className="stack gap-3">
         {loading ? (
-          <Card loading />
+          <Card className="flex justify-center rounded-2xl py-12">
+            <Spinner />
+          </Card>
         ) : (
           visibleChannels.map((c) => (
             <ChannelCard
@@ -678,68 +668,200 @@ export default function ChannelsPage() {
               sync={syncState[c.id]}
               actions={actionsFor(c, true)}
               expanded={expandedKeys.includes(c.id)}
-              onToggle={() => setExpandedKeys((keys) => (keys.includes(c.id) ? keys.filter((k) => k !== c.id) : [...keys, c.id]))}
+              onToggle={() => toggleRow(c.id)}
               expandedContent={expandedContent(c)}
             />
           ))
         )}
       </div>
     ) : (
-      <Card bodyStyle={{ padding: 0 }}>
-        <Table<Channel>
-          rowKey="id"
-          columns={columns}
-          dataSource={loading ? [] : visibleChannels}
-          loading={loading}
-          scroll={{ x: 1160 }}
-          pagination={false}
-          // 展开按钮单独占一列；默认塞进第一列时会被多行的渠道信息挤到上面
-          hideExpandedColumn={false}
-          expandedRowKeys={expandedKeys}
-          onExpand={(expanded, record) => {
-            const id = (record as Channel | undefined)?.id
-            if (id == null) return
-            setExpandedKeys((keys) => (expanded ? [...keys, id] : keys.filter((k) => k !== id)))
-          }}
-          expandedRowRender={(c?: Channel) => (c ? expandedContent(c) : null)}
-          rowExpandable={(c?: Channel) => (c ? hasDetails(c, syncState[c.id]) : false)}
-        />
-      </Card>
+      <div className="expandable-table">
+        {loading ? (
+          <div className="expandable-table__body flex justify-center py-16">
+            <Spinner />
+          </div>
+        ) : (
+          <div className="expandable-table__scroll">
+            <div className="min-w-[830px]">
+              <div className={`${DESKTOP_GRID} expandable-table__header`}>
+                <span />
+                <span>渠道</span>
+                <span>类型</span>
+                <span>余额</span>
+                <span>今日 / 累计消费</span>
+                <span>状态</span>
+                <span>更新</span>
+                <span>操作</span>
+              </div>
+              <div className="expandable-table__body list-rows">
+                {visibleChannels.map((c) => {
+                  const expandable = hasDetails(c, syncState[c.id])
+                  const expanded = expandable && expandedKeys.includes(c.id)
+                  const at = c.last_balance_at ?? c.updated_at
+
+                  return (
+                    <div key={c.id}>
+                      <div className={`${DESKTOP_GRID} px-3.5 py-3 transition-colors hover:bg-default/40`}>
+                        <div className="flex justify-center">
+                          {expandable ? (
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label={expanded ? "收起详情" : "展开详情"}
+                              aria-expanded={expanded}
+                              className="size-7 min-w-0 text-muted"
+                              onPress={() => toggleRow(c.id)}
+                            >
+                              {expanded ? (
+                                <ChevronDown className="size-4" />
+                              ) : (
+                                <ChevronRight className="size-4" />
+                              )}
+                            </Button>
+                          ) : null}
+                        </div>
+
+                        <div className="stack min-w-0 gap-0.5">
+                          <span className="truncate text-sm font-semibold text-foreground" title={c.name}>
+                            {c.name}
+                          </span>
+                          {/* 账号参与搜索和“账号 A→Z”排序，显示出来才看得出命中和排序依据；token 模式常为空 */}
+                          {c.username.trim() ? (
+                            <span className="truncate text-xs text-muted" title={c.username}>
+                              {c.username}
+                            </span>
+                          ) : null}
+                          {c.tags?.length ? (
+                            <TagGroup aria-label={`${c.name} 标签`} size="sm" className="mt-0.5">
+                              <TagGroup.List>
+                                {c.tags.map((tag) => (
+                                  <Tag key={tag} id={tag} textValue={tag}>
+                                    {tag}
+                                  </Tag>
+                                ))}
+                              </TagGroup.List>
+                            </TagGroup>
+                          ) : null}
+                        </div>
+
+                        <div>
+                          <Chip color={c.type === "newapi" ? "accent" : "default"} variant="soft" size="sm">
+                            {channelTypeLabel(c.type)}
+                          </Chip>
+                        </div>
+
+                        <div className="stack gap-0.5">
+                          <Tooltip>
+                            <Tooltip.Trigger className="inline-flex w-fit">
+                              <span className="num text-sm font-semibold text-foreground">
+                                {money(c.last_balance)}
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Content>{rechargeMultiplierTip(c)}</Tooltip.Content>
+                          </Tooltip>
+                          <span className="text-xs text-muted">
+                            {c.balance_threshold > 0 ? `低于 ${money(c.balance_threshold)} 告警` : "不告警"}
+                          </span>
+                        </div>
+
+                        <div className="stack num gap-0.5">
+                          <span className="text-sm text-foreground">{money(c.today_cost)}</span>
+                          <span className="text-xs text-muted">累计 {money(c.total_cost)}</span>
+                        </div>
+
+                        <div>
+                          <ChannelStatusTags channel={c} sync={syncState[c.id]} />
+                        </div>
+
+                        <div>
+                          <Tooltip>
+                            <Tooltip.Trigger className="inline-flex">
+                              <span className="text-xs text-muted">{relativeTime(at)}</span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Content>{fullDateTime(at)}</Tooltip.Content>
+                          </Tooltip>
+                        </div>
+
+                        <div className="row flex-nowrap gap-0.5">{actionsFor(c, false)}</div>
+                      </div>
+
+                      {expandable ? (
+                        <Disclosure isExpanded={expanded}>
+                          <Disclosure.Content>
+                            <Disclosure.Body className="border-t border-separator/70 bg-surface-secondary/45 px-4 py-3 pl-11">
+                              {expandedContent(c)}
+                            </Disclosure.Body>
+                          </Disclosure.Content>
+                        </Disclosure>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     )
+
     body = (
       // 新条件的结果到达前先显示旧列表并变暗
-      <div className="stack" style={{ gap: 12, opacity: pageStale ? 0.6 : 1, transition: "opacity .2s ease .15s" }} aria-busy={pageStale}>
+      <div
+        className={`stack gap-3 transition-opacity duration-200 ${pageStale ? "opacity-60" : "opacity-100"}`}
+        aria-busy={pageStale}
+      >
         {list}
-        <div className="row-between" style={{ flexWrap: "wrap" }}>
-          <Typography.Text type="tertiary" size="small">
+        <div className="row-between flex-wrap gap-3">
+          <span className="num text-xs text-muted">
             {!countsReady
               ? "加载中…"
               : pageSizeAll
                 ? `显示全部 ${totalChannels} 个渠道`
                 : `第 ${currentPage}/${totalPages} 页，共 ${totalChannels} 个渠道`}
-          </Typography.Text>
-          <div className="row" style={{ flexWrap: "wrap" }}>
+          </span>
+          <div className="row flex-wrap gap-2">
             {!pageSizeAll && countsReady && totalPages > 1 ? (
-              <Pagination
-                size={isMobile ? "small" : "default"}
-                currentPage={currentPage}
-                pageSize={pageSize as number}
-                total={totalChannels}
-                onPageChange={setPage}
-              />
+              <div className="w-auto">
+                <PaginationBar
+                  page={currentPage}
+                  total={totalChannels}
+                  pageSize={pageSize as number}
+                  onChange={setPage}
+                  compact={isMobile}
+                />
+              </div>
             ) : null}
             <Select
-              size="small"
+              aria-label="每页显示数量"
               value={String(pageSize)}
-              onChange={(v) => {
-                const next = pageSizeOptions.find((o) => String(o) === v) ?? DEFAULT_PAGE_SIZE
+              onChange={(k) => {
+                if (k == null) return
+                const next = pageSizeOptions.find((o) => String(o) === String(k)) ?? DEFAULT_PAGE_SIZE
                 setPageSize(next)
                 saveStored(PAGE_SIZE_STORAGE_KEY, next)
                 setPage(1)
               }}
-              style={{ width: 130 }}
-              optionList={pageSizeOptions.map((o) => ({ value: String(o), label: o === "all" ? "全部显示" : `每页 ${o} 个` }))}
-            />
+              className="w-32"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {pageSizeOptions.map((o) => {
+                    const label = o === "all" ? "全部显示" : `每页 ${o} 个`
+                    return (
+                      <ListBox.Item key={String(o)} id={String(o)} textValue={label}>
+                        {label}
+                        <ListBox.ItemIndicator />
+                      </ListBox.Item>
+                    )
+                  })}
+                </ListBox>
+              </Select.Popover>
+            </Select>
           </div>
         </div>
       </div>
@@ -753,13 +875,26 @@ export default function ChannelsPage() {
         description={countText}
         actions={
           <>
-            <Button icon={<IconList />} disabled={channelsLoading || !channels?.length} onClick={() => setGroupsOpen(true)}>
+            <Button
+              variant="tertiary"
+              size="sm"
+              isDisabled={channelsLoading || !channels?.length}
+              onPress={() => setGroupsOpen(true)}
+            >
+              <ListUl className="size-4" />
               全部分组
             </Button>
-            <Button icon={<IconRefresh spin={bulkSync.running} />} disabled={anySyncRunning || !channels?.length} onClick={() => void startBulkSync()}>
+            <Button
+              variant="tertiary"
+              size="sm"
+              isDisabled={anySyncRunning || !channels?.length}
+              onPress={() => void startBulkSync()}
+            >
+              <ArrowsRotateRight className={`size-4 ${bulkSync.running ? "animate-spin" : ""}`} />
               {bulkSync.running ? `同步中 ${bulkSync.completed}/${bulkSync.total}` : "全部同步"}
             </Button>
-            <Button theme="solid" icon={<IconPlus />} onClick={() => openForm(null)}>
+            <Button variant="primary" size="sm" onPress={() => openForm(null)}>
+              <Plus className="size-4" />
               新增渠道
             </Button>
           </>
@@ -767,62 +902,120 @@ export default function ChannelsPage() {
       />
 
       {filtersActive || channels == null || channels.length > 0 ? (
-        <div className="row" style={{ flexWrap: "wrap" }}>
-          <Input
-            prefix={<IconSearch />}
+        <div className="row flex-wrap gap-2">
+          <SearchField
+            aria-label="搜索渠道"
             value={searchInput}
             onChange={setSearchInput}
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={(e) => {
-              // 以确认后的文字为准；各浏览器 compositionend 与最后一次 input 的先后不同
-              setComposing(false)
-              setSearchInput(e.currentTarget.value)
-            }}
-            maxLength={MAX_SEARCH_LENGTH}
-            showClear
-            placeholder="搜索名称、账号、站点、备注或标签"
-            aria-label="搜索渠道"
-            style={{ flex: "1 1 260px", minWidth: 200 }}
-          />
+            className="min-w-[200px] flex-1 basis-[260px]"
+          >
+            <SearchField.Group>
+              <SearchField.SearchIcon />
+              <SearchField.Input
+                maxLength={MAX_SEARCH_LENGTH}
+                placeholder="搜索名称、账号、站点、备注或标签"
+                onCompositionStart={() => setComposing(true)}
+                onCompositionEnd={(e) => {
+                  // 以确认后的文字为准；各浏览器 compositionend 与最后一次 input 的先后不同
+                  setComposing(false)
+                  setSearchInput(e.currentTarget.value)
+                }}
+              />
+              <SearchField.ClearButton />
+            </SearchField.Group>
+          </SearchField>
+
           <Select
-            value={statusFilter}
-            onChange={(v) => {
-              setStatusFilter(v as ChannelStatusFilter)
-              setPage(1)
-            }}
-            optionList={statusFilterOptions}
-            style={{ width: 130 }}
             aria-label="按状态筛选"
-          />
+            value={statusFilter}
+            onChange={(k) => {
+              if (k != null) {
+                setStatusFilter(String(k) as ChannelStatusFilter)
+                setPage(1)
+              }
+            }}
+            className="w-32"
+          >
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {statusFilterOptions.map((o) => (
+                  <ListBox.Item key={o.value} id={o.value} textValue={o.label}>
+                    {o.label}
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+
           {tagOptions.length > 0 ? (
             <Select
-              value={activeTag || undefined}
-              onChange={(v) => {
-                setTagFilter((v as string | undefined) ?? "")
+              aria-label="按标签筛选"
+              placeholder="全部标签"
+              value={activeTag || null}
+              onChange={(k) => {
+                setTagFilter(k == null ? "" : String(k))
                 setPage(1)
               }}
-              placeholder="全部标签"
-              showClear
-              filter
-              optionList={tagOptions.map((t) => ({ value: t, label: t }))}
-              style={{ width: 150 }}
-              aria-label="按标签筛选"
-            />
+              onClear={() => {
+                setTagFilter("")
+                setPage(1)
+              }}
+              className="w-36"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.ClearButton />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {tagOptions.map((t) => (
+                    <ListBox.Item key={t} id={t} textValue={t}>
+                      {t}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
           ) : null}
+
           <Select
+            aria-label="排序方式"
             value={sortMode}
-            onChange={(v) => {
-              const next = (v as ChannelSortMode) ?? "default"
+            onChange={(k) => {
+              if (k == null) return
+              const next = String(k) as ChannelSortMode
               setSortMode(next)
               saveStored(SORT_STORAGE_KEY, next)
               setPage(1)
             }}
-            optionList={sortOptions.map((o) => ({ value: o.value, label: o.label }))}
-            style={{ width: 180 }}
-            aria-label="排序方式"
-          />
+            className="w-44"
+          >
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {sortOptions.map((o) => (
+                  <ListBox.Item key={o.value} id={o.value} textValue={o.label}>
+                    {o.label}
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+
           {filtersActive ? (
-            <Button theme="borderless" icon={<IconFilter />} onClick={clearFilters}>
+            <Button variant="ghost" size="sm" onPress={clearFilters}>
+              <Sliders className="size-4" />
               清除筛选
             </Button>
           ) : null}
@@ -832,11 +1025,20 @@ export default function ChannelsPage() {
       {body}
 
       <ChannelFormModal visible={formOpen} onClose={() => setFormOpen(false)} channel={editing} />
-      <AllGroupsModal visible={groupsOpen} onClose={() => setGroupsOpen(false)} channels={channels ?? []} onAPIKeyAction={onAPIKeyAction} />
+      <AllGroupsModal
+        visible={groupsOpen}
+        onClose={() => setGroupsOpen(false)}
+        channels={channels ?? []}
+        onAPIKeyAction={onAPIKeyAction}
+      />
       <ChannelRedeemModal channel={redeeming} onClose={() => setRedeeming(null)} />
       <ChannelRechargeModal channel={recharging} onClose={() => setRecharging(null)} />
       <ChannelGroupsSheet channel={groupsOf} onClose={() => setGroupsOf(null)} onAPIKeyAction={onAPIKeyAction} />
-      <ChannelAPIKeysSheet channel={apiKeySheet?.channel ?? null} initialAction={apiKeySheet?.initialAction} onClose={() => setAPIKeySheet(null)} />
+      <ChannelAPIKeysSheet
+        channel={apiKeySheet?.channel ?? null}
+        initialAction={apiKeySheet?.initialAction}
+        onClose={() => setAPIKeySheet(null)}
+      />
     </div>
   )
 }
@@ -847,7 +1049,14 @@ function hasDetails(c: Channel, sync?: ChannelSyncState): boolean {
 }
 
 /** 窄屏下的渠道卡片：字段和操作与表格一致，报错和备注点开再看。 */
-function ChannelCard({ channel: c, sync, actions, expanded, onToggle, expandedContent }: {
+function ChannelCard({
+  channel: c,
+  sync,
+  actions,
+  expanded,
+  onToggle,
+  expandedContent,
+}: {
   channel: Channel
   sync?: ChannelSyncState
   actions: ReactNode[]
@@ -856,76 +1065,86 @@ function ChannelCard({ channel: c, sync, actions, expanded, onToggle, expandedCo
   expandedContent: ReactNode
 }) {
   const at = c.last_balance_at ?? c.updated_at
-  return (
-    <Card bodyStyle={{ padding: 12 }}>
-      <div className="stack" style={{ gap: 10 }}>
-        <div className="row-between" style={{ alignItems: "flex-start" }}>
-          <div className="stack" style={{ gap: 2, minWidth: 0 }}>
-            <div className="row" style={{ gap: 6, minWidth: 0 }}>
-              <Typography.Text strong ellipsis={{ showTooltip: true }} style={{ minWidth: 0 }}>
-                {c.name}
-              </Typography.Text>
-              <Tag size="small" color={c.type === "newapi" ? "violet" : "light-blue"} style={{ flexShrink: 0 }}>
-                {channelTypeLabel(c.type)}
-              </Tag>
-            </div>
-            {c.username.trim() ? (
-              <Typography.Text type="tertiary" size="small" ellipsis={{ showTooltip: true }}>
-                {c.username}
-              </Typography.Text>
-            ) : null}
-          </div>
-          {/* 名字再长也只截名字，状态标签保持完整 */}
-          <div style={{ flexShrink: 0 }}>
-            <ChannelStatusTags channel={c} sync={sync} />
-          </div>
-        </div>
+  const canExpand = Boolean(c.last_error || c.notes)
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+  return (
+    <Card className="gap-2.5 rounded-2xl p-3.5">
+      <Card.Header className="flex-row items-start justify-between gap-2">
+        <div className="stack min-w-0 gap-0.5">
+          <div className="row min-w-0 gap-1.5">
+            <Card.Title className="min-w-0 truncate text-sm font-semibold" title={c.name}>
+              {c.name}
+            </Card.Title>
+            <Chip
+              size="sm"
+              variant="soft"
+              color={c.type === "newapi" ? "accent" : "default"}
+              className="shrink-0"
+            >
+              {channelTypeLabel(c.type)}
+            </Chip>
+          </div>
+          {c.username.trim() ? (
+            <Card.Description className="truncate text-xs" title={c.username}>
+              {c.username}
+            </Card.Description>
+          ) : null}
+        </div>
+        {/* 名字再长也只截名字，状态标签保持完整 */}
+        <div className="shrink-0">
+          <ChannelStatusTags channel={c} sync={sync} />
+        </div>
+      </Card.Header>
+
+      <Card.Content className="gap-2.5">
+        <div className="grid grid-cols-3 gap-2">
           <Stat label="余额" value={money(c.last_balance)} />
           <Stat label="今日消费" value={money(c.today_cost)} />
           <Stat label="累计消费" value={money(c.total_cost)} />
         </div>
 
         {c.tags?.length ? (
-          <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-            {c.tags.map((tag) => (
-              <Tag key={tag} size="small" color="white">
-                {tag}
-              </Tag>
-            ))}
-          </div>
+          <TagGroup aria-label={`${c.name} 标签`} size="sm">
+            <TagGroup.List>
+              {c.tags.map((tag) => (
+                <Tag key={tag} id={tag} textValue={tag}>
+                  {tag}
+                </Tag>
+              ))}
+            </TagGroup.List>
+          </TagGroup>
         ) : null}
 
-        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-          {actions}
-        </div>
+        <div className="row flex-wrap gap-1.5">{actions}</div>
+      </Card.Content>
 
-        <div className="row-between">
-          <Typography.Text type="tertiary" size="small">
-            更新于 {relativeTime(at)}
-          </Typography.Text>
-          {c.last_error || c.notes ? (
-            <Button theme="borderless" size="small" onClick={onToggle}>
-              {expanded ? "收起详情" : c.last_error ? "详情（有报错）" : "详情"}
-            </Button>
-          ) : null}
-        </div>
-        {expanded ? expandedContent : sync ? <SyncProgress state={sync} /> : null}
-      </div>
+      <Card.Footer className="justify-between gap-2 pt-0.5">
+        <span className="text-xs text-muted">更新于 {relativeTime(at)}</span>
+        {canExpand ? (
+          <Button variant="ghost" size="sm" onPress={onToggle}>
+            {expanded ? "收起详情" : c.last_error ? "详情（有报错）" : "详情"}
+          </Button>
+        ) : null}
+      </Card.Footer>
+
+      {canExpand ? (
+        <Disclosure isExpanded={expanded}>
+          <Disclosure.Content>
+            <Disclosure.Body className="pt-1">{expandedContent}</Disclosure.Body>
+          </Disclosure.Content>
+        </Disclosure>
+      ) : sync ? (
+        <SyncProgress state={sync} />
+      ) : null}
     </Card>
   )
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ padding: "6px 8px", borderRadius: 6, background: "var(--semi-color-fill-0)", minWidth: 0 }}>
-      <Typography.Text type="tertiary" size="small" style={{ display: "block" }}>
-        {label}
-      </Typography.Text>
-      <Typography.Text strong className="num truncate" style={{ display: "block" }}>
-        {value}
-      </Typography.Text>
-    </div>
+    <Surface variant="secondary" className="min-w-0 rounded-xl px-2.5 py-1.5">
+      <span className="block text-[11px] text-muted">{label}</span>
+      <span className="num block truncate text-sm font-semibold text-foreground">{value}</span>
+    </Surface>
   )
 }

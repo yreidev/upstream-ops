@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react"
-import { Button, Card, Table, Tag, Toast, Tooltip, Typography } from "@douyinfe/semi-ui"
-import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
-import { IconDelete, IconEdit, IconPlus, IconSend } from "@douyinfe/semi-icons"
+import { Accordion, Button, Chip, EmptyState, Spinner, Surface, Table, Tooltip, toast } from "@heroui/react"
+import { PaperPlane, Pencil, Plus, TrashBin } from "@gravity-ui/icons"
 import { PageHeader } from "@/components/layout/page-header"
+import { PaginationBar } from "@/components/common/pagination-bar"
 import { NotificationBody } from "@/components/monitor/notification-body"
 import { NotificationFormModal } from "@/components/monitor/notification-form-modal"
 import { apiFetch } from "@/lib/api"
-import type { NotificationChannel, NotificationLog } from "@/lib/api-types"
+import type { NotificationChannel } from "@/lib/api-types"
 import { confirm } from "@/lib/confirm"
 import { fullDateTime, relativeTime } from "@/lib/format"
 import { notificationEventLabel } from "@/lib/labels"
@@ -35,14 +35,13 @@ export default function NotificationsPage() {
   return (
     <div className="page">
       <PageHeader title="通知" description="Telegram / 企业微信。每个通知渠道可以单独订阅指定渠道、事件和分组。" />
-      <NotificationChannelsCard />
-      <NotificationLogsCard />
+      <NotificationChannelsSection />
+      <NotificationLogsSection />
     </div>
   )
 }
 
-function NotificationChannelsCard() {
-  const isMobile = useIsMobile()
+function NotificationChannelsSection() {
   const { data, loading } = useNotificationChannels()
   const refresh = useTriggerRefresh()
   const [editing, setEditing] = useState<NotificationChannel | null>(null)
@@ -57,12 +56,14 @@ function NotificationChannelsCard() {
   async function handleTest(c: NotificationChannel) {
     setBusy(c.id)
     try {
-      const res = await apiFetch<{ ok: boolean; error?: string }>(`/notifications/channels/${c.id}/test`, { method: "POST" })
-      if (res.ok) Toast.success(`已发送测试消息到 ${c.name}`)
-      else Toast.error(`测试失败：${res.error ?? "未知错误"}`)
+      const res = await apiFetch<{ ok: boolean; error?: string }>(`/notifications/channels/${c.id}/test`, {
+        method: "POST",
+      })
+      if (res.ok) toast.success(`已发送测试消息到 ${c.name}`)
+      else toast.danger(`测试失败：${res.error ?? "未知错误"}`)
       refresh()
     } catch (e) {
-      Toast.error((e as Error).message || "测试失败")
+      toast.danger((e as Error).message || "测试失败")
     } finally {
       setBusy(null)
     }
@@ -79,169 +80,237 @@ function NotificationChannelsCard() {
     setBusy(c.id)
     try {
       await apiFetch(`/notifications/channels/${c.id}`, { method: "DELETE" })
-      Toast.success(`已删除 ${c.name}`)
+      toast.success(`已删除 ${c.name}`)
       refresh()
     } catch (e) {
-      Toast.error((e as Error).message || "删除失败")
+      toast.danger((e as Error).message || "删除失败")
     } finally {
       setBusy(null)
     }
   }
 
-  const columns: ColumnProps<NotificationChannel>[] = [
-    { title: "名称", dataIndex: "name", render: (v: string) => <Typography.Text strong>{v}</Typography.Text> },
-    { title: "类型", dataIndex: "type", width: 120, render: (v: string) => notifyTypeLabel[v] ?? v },
-    {
-      title: "订阅",
-      dataIndex: "subscriptions",
-      width: 140,
-      render: (v?: string) => {
-        const n = parseSubCount(v)
-        return n === 0 ? <Typography.Text type="tertiary">全部事件</Typography.Text> : `${n} 条规则`
-      },
-    },
-    {
-      title: "状态",
-      dataIndex: "enabled",
-      width: 90,
-      render: (v: boolean) => <Tag color={v ? "green" : "grey"}>{v ? "已启用" : "已禁用"}</Tag>,
-    },
-    {
-      title: "操作",
-      key: "actions",
-      width: 140,
-      fixed: isMobile ? undefined : "right",
-      render: (_: unknown, c: NotificationChannel) => (
-        <div className="row" style={{ gap: 4 }}>
-          <Tooltip content="发送测试消息">
-            <Button
-              aria-label="发送测试消息"
-              theme="borderless"
-              size="small"
-              icon={<IconSend />}
-              loading={busy === c.id}
-              disabled={busy === c.id}
-              onClick={() => handleTest(c)}
-            />
-          </Tooltip>
-          <Tooltip content="编辑">
-            <Button theme="borderless" size="small" icon={<IconEdit />} onClick={() => openForm(c)} aria-label="编辑" />
-          </Tooltip>
-          <Tooltip content="删除">
-            <Button
-              aria-label="删除"
-              theme="borderless"
-              type="danger"
-              size="small"
-              icon={<IconDelete />}
-              disabled={busy === c.id}
-              onClick={() => handleDelete(c)}
-            />
-          </Tooltip>
-        </div>
-      ),
-    },
-  ]
-
   return (
-    <Card
-      title="通知渠道"
-      headerExtraContent={
-        <Button theme="solid" size="small" icon={<IconPlus />} onClick={() => openForm(null)}>
+    <section className="stack gap-2.5">
+      <div className="row-between">
+        <div className="row gap-2">
+          <h2 className="m-0 text-sm font-semibold text-foreground">通知渠道</h2>
+          {data ? (
+            <Chip size="sm" variant="soft" className="num">
+              {data.length}
+            </Chip>
+          ) : null}
+        </div>
+        <Button variant="primary" size="sm" onPress={() => openForm(null)}>
+          <Plus className="size-4" />
           新增
         </Button>
-      }
-      bodyStyle={{ padding: 0 }}
-    >
-      <Table<NotificationChannel>
-        rowKey="id"
-        size={isMobile ? "small" : "default"}
-        columns={columns}
-        dataSource={data ?? []}
-        loading={loading && !data}
-        scroll={{ x: 650 }}
-        pagination={false}
-        empty="还没有通知渠道"
-      />
+      </div>
+
+      {loading && !data ? (
+        <Surface className="flex justify-center rounded-[20px] py-12">
+          <Spinner />
+        </Surface>
+      ) : (
+        <Table>
+          <Table.ScrollContainer>
+            <Table.Content aria-label="通知渠道列表" className="min-w-[600px]">
+              <Table.Header>
+                <Table.Column isRowHeader>名称</Table.Column>
+                <Table.Column className="w-32">类型</Table.Column>
+                <Table.Column className="w-36">订阅</Table.Column>
+                <Table.Column className="w-24">状态</Table.Column>
+                <Table.Column className="w-36">操作</Table.Column>
+              </Table.Header>
+              <Table.Body
+                items={data ?? []}
+                renderEmptyState={() => <EmptyState className="py-10 text-sm text-muted">还没有通知渠道</EmptyState>}
+              >
+                {(c) => {
+                  const n = parseSubCount(c.subscriptions)
+                  return (
+                    <Table.Row key={c.id} id={c.id}>
+                      <Table.Cell>
+                        <span className="font-semibold text-foreground">{c.name}</span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <span className="text-sm text-foreground">{notifyTypeLabel[c.type] ?? c.type}</span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {n === 0 ? (
+                          <span className="text-xs text-muted">全部事件</span>
+                        ) : (
+                          <span className="text-xs text-foreground">{n} 条规则</span>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Chip color={c.enabled ? "success" : "default"} variant="soft" size="sm">
+                          {c.enabled ? "已启用" : "已禁用"}
+                        </Chip>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <div className="row gap-0.5">
+                          <Tooltip>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label="发送测试消息"
+                              isPending={busy === c.id}
+                              isDisabled={busy === c.id}
+                              onPress={() => void handleTest(c)}
+                            >
+                              {busy === c.id ? <Spinner size="sm" color="current" /> : <PaperPlane className="size-4" />}
+                            </Button>
+                            <Tooltip.Content>发送测试消息</Tooltip.Content>
+                          </Tooltip>
+                          <Tooltip>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label="编辑"
+                              onPress={() => openForm(c)}
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                            <Tooltip.Content>编辑</Tooltip.Content>
+                          </Tooltip>
+                          <Tooltip>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label="删除"
+                              className="text-danger"
+                              isDisabled={busy === c.id}
+                              onPress={() => void handleDelete(c)}
+                            >
+                              <TrashBin className="size-4" />
+                            </Button>
+                            <Tooltip.Content>删除</Tooltip.Content>
+                          </Tooltip>
+                        </div>
+                      </Table.Cell>
+                    </Table.Row>
+                  )
+                }}
+              </Table.Body>
+            </Table.Content>
+          </Table.ScrollContainer>
+        </Table>
+      )}
       <NotificationFormModal visible={formOpen} onClose={() => setFormOpen(false)} channel={editing} />
-    </Card>
+    </section>
   )
 }
 
-function NotificationLogsCard() {
+const LOGS_GRID = "grid grid-cols-[86px_84px_minmax(140px,1.5fr)_116px_110px_68px] items-center gap-2"
+
+function NotificationLogsSection() {
   const isMobile = useIsMobile()
   const [page, setPage] = useState(1)
   const logs = useNotificationLogs(page, PAGE_SIZE)
   const channels = useChannels()
   const channelMap = useMemo(() => new Map((channels.data ?? []).map((c) => [c.id, c.name] as const)), [channels.data])
-
-  const columns: ColumnProps<NotificationLog>[] = [
-    {
-      title: "时间",
-      dataIndex: "sent_at",
-      width: 130,
-      render: (v: string) => (
-        <Tooltip content={fullDateTime(v)}>
-          <span>{relativeTime(v)}</span>
-        </Tooltip>
-      ),
-    },
-    {
-      title: "事件",
-      dataIndex: "event",
-      width: 110,
-      render: (v: string) => {
-        const meta = notificationEventLabel(v)
-        return <Tag color={meta.color}>{meta.label}</Tag>
-      },
-    },
-    {
-      title: "标题",
-      dataIndex: "subject",
-      render: (v: string) => <Typography.Text ellipsis={{ showTooltip: true }}>{v}</Typography.Text>,
-    },
-    {
-      title: "上游渠道",
-      dataIndex: "upstream_channel_id",
-      width: 160,
-      render: (id?: number) =>
-        id ? channelMap.get(id) ?? `渠道 #${id}` : <Typography.Text type="tertiary">—</Typography.Text>,
-    },
-    {
-      title: "发往",
-      dataIndex: "channel_name",
-      width: 150,
-      render: (v: string | undefined, l: NotificationLog) => v || `通知渠道 #${l.channel_id}`,
-    },
-    {
-      title: "结果",
-      dataIndex: "success",
-      width: 90,
-      render: (v: boolean) => <Tag color={v ? "green" : "red"}>{v ? "已送达" : "失败"}</Tag>,
-    },
-  ]
+  const items = logs.data?.items ?? []
+  const total = logs.data?.total ?? 0
 
   return (
-    <Card title="发送记录" bodyStyle={{ padding: 0 }}>
-      <Table<NotificationLog>
-        rowKey="id"
-        size={isMobile ? "small" : "default"}
-        columns={columns}
-        dataSource={logs.data?.items ?? []}
-        loading={logs.loading && !logs.data}
-        scroll={{ x: 760 }}
-        empty="还没有发送记录"
-        expandedRowRender={(l?: NotificationLog) => (l ? <NotificationBody log={l} /> : null)}
-        pagination={{
-          currentPage: page,
-          pageSize: PAGE_SIZE,
-          total: logs.data?.total ?? 0,
-          onPageChange: setPage,
-          // 手机上用紧凑分页，放不下“显示第几条”
-          showTotal: !isMobile,
-          size: isMobile ? "small" : "default",
-        }}
-      />
-    </Card>
+    <section className="stack gap-2.5">
+      <div className="row gap-2">
+        <h2 className="m-0 text-sm font-semibold text-foreground">发送记录</h2>
+        {logs.data ? (
+          <Chip size="sm" variant="soft" className="num">
+            {total}
+          </Chip>
+        ) : null}
+      </div>
+
+      {logs.loading && !logs.data ? (
+        <Surface className="flex justify-center rounded-[20px] py-12">
+          <Spinner />
+        </Surface>
+      ) : (
+        <div className={`expandable-table transition-opacity ${logs.stale ? "opacity-60" : "opacity-100"}`}>
+          <div className="expandable-table__scroll">
+            <div className="min-w-[720px]">
+              <div className="expandable-table__header flex items-center gap-2">
+                <span className="w-4 shrink-0" />
+                <div className={`${LOGS_GRID} flex-1`}>
+                  <span>时间</span>
+                  <span>事件</span>
+                  <span>标题</span>
+                  <span>上游渠道</span>
+                  <span>发往</span>
+                  <span>结果</span>
+                </div>
+              </div>
+              <div className="expandable-table__body">
+                {items.length === 0 ? (
+                  <EmptyState className="py-12 text-sm text-muted">还没有发送记录</EmptyState>
+                ) : (
+                  <Accordion allowsMultipleExpanded className="w-full">
+                    {items.map((l) => {
+                      const meta = notificationEventLabel(l.event)
+                      return (
+                        <Accordion.Item key={l.id} id={String(l.id)}>
+                          <Accordion.Heading>
+                            <Accordion.Trigger className="gap-2 px-3.5 py-2.5 font-normal">
+                              <Accordion.Indicator className="ms-0 shrink-0" />
+                              <div className={`${LOGS_GRID} min-w-0 flex-1`}>
+                                <span className="truncate text-xs text-muted" title={fullDateTime(l.sent_at)}>
+                                  {relativeTime(l.sent_at)}
+                                </span>
+                                <div>
+                                  <Chip color={meta.color} variant="soft" size="sm">
+                                    {meta.label}
+                                  </Chip>
+                                </div>
+                                <span className="truncate text-sm text-foreground" title={l.subject}>
+                                  {l.subject}
+                                </span>
+                                <span className="truncate text-xs text-muted">
+                                  {l.upstream_channel_id
+                                    ? (channelMap.get(l.upstream_channel_id) ?? `渠道 #${l.upstream_channel_id}`)
+                                    : "—"}
+                                </span>
+                                <span className="truncate text-xs text-foreground">
+                                  {l.channel_name || `通知渠道 #${l.channel_id}`}
+                                </span>
+                                <div>
+                                  <Chip color={l.success ? "success" : "danger"} variant="soft" size="sm">
+                                    {l.success ? "已送达" : "失败"}
+                                  </Chip>
+                                </div>
+                              </div>
+                            </Accordion.Trigger>
+                          </Accordion.Heading>
+                          <Accordion.Panel>
+                            <Accordion.Body className="border-t border-separator/70 bg-surface-secondary/45 px-4 py-3 pl-10 text-foreground">
+                              <NotificationBody log={l} />
+                            </Accordion.Body>
+                          </Accordion.Panel>
+                        </Accordion.Item>
+                      )
+                    })}
+                  </Accordion>
+                )}
+              </div>
+            </div>
+          </div>
+          {total > PAGE_SIZE ? (
+            <div className="expandable-table__footer">
+              <PaginationBar
+                page={page}
+                total={total}
+                pageSize={PAGE_SIZE}
+                onChange={setPage}
+                compact={isMobile}
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
   )
 }

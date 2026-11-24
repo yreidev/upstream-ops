@@ -19,7 +19,6 @@ type settingsConfigView struct {
 	Scheduler     config.SchedulerConfig     `json:"scheduler"`
 	Notifications config.NotificationsConfig `json:"notifications"`
 	Upstream      config.UpstreamConfig      `json:"upstream"`
-	Degrade       config.DegradeConfig       `json:"degrade"`
 }
 
 type settingsConfigInput struct {
@@ -28,7 +27,6 @@ type settingsConfigInput struct {
 	Scheduler     config.SchedulerConfig     `json:"scheduler" binding:"required"`
 	Notifications config.NotificationsConfig `json:"notifications" binding:"required"`
 	Upstream      config.UpstreamConfig      `json:"upstream"`
-	Degrade       config.DegradeConfig       `json:"degrade"`
 }
 
 func registerSettings(g *gin.RouterGroup, d *Deps) {
@@ -60,7 +58,7 @@ func cronNextRuns(c *gin.Context) {
 var settingsKeys = func() []string {
 	var out []string
 	for _, key := range config.KeyPaths() {
-		for _, prefix := range []string{"app.", "auth.", "scheduler.", "notifications.", "upstream.", "degrade."} {
+		for _, prefix := range []string{"app.", "auth.", "scheduler.", "notifications.", "upstream."} {
 			if strings.HasPrefix(key, prefix) {
 				out = append(out, key)
 				break
@@ -96,7 +94,6 @@ func getSettingsConfig(c *gin.Context, d *Deps) {
 				Scheduler:     cfg.Scheduler,
 				Notifications: cfg.Notifications,
 				Upstream:      cfg.Upstream.WithDefaults(),
-				Degrade:       cfg.Degrade.WithDefaults(),
 			},
 			"env_overrides": overrides,
 		},
@@ -131,7 +128,6 @@ func saveSettingsConfig(c *gin.Context, d *Deps) {
 	cfg.Scheduler = in.Scheduler
 	cfg.Notifications = in.Notifications
 	cfg.Upstream = in.Upstream.WithDefaults()
-	cfg.Degrade = in.Degrade.WithDefaults()
 
 	var locked []string
 	for key := range config.EnvOverrides(settingsKeys) {

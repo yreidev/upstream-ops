@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -22,7 +21,6 @@ type Config struct {
 	Scheduler     SchedulerConfig     `mapstructure:"scheduler" yaml:"scheduler" json:"scheduler"`
 	Notifications NotificationsConfig `mapstructure:"notifications" yaml:"notifications" json:"notifications"`
 	Upstream      UpstreamConfig      `mapstructure:"upstream" yaml:"upstream" json:"upstream"`
-	Degrade       DegradeConfig       `mapstructure:"degrade" yaml:"degrade" json:"degrade"`
 	Log           LogConfig           `mapstructure:"log" yaml:"log" json:"log"`
 }
 
@@ -68,10 +66,8 @@ type AuthConfig struct {
 }
 
 type SchedulerConfig struct {
-	BalanceCron string `mapstructure:"balanceCron" yaml:"balanceCron" json:"balanceCron"`
-	RateCron    string `mapstructure:"rateCron" yaml:"rateCron" json:"rateCron"`
-	// DegradeCron GPT 降智检测的巡检周期，留空不巡检。
-	DegradeCron string          `mapstructure:"degradeCron" yaml:"degradeCron" json:"degradeCron"`
+	BalanceCron string          `mapstructure:"balanceCron" yaml:"balanceCron" json:"balanceCron"`
+	RateCron    string          `mapstructure:"rateCron" yaml:"rateCron" json:"rateCron"`
 	Retention   RetentionConfig `mapstructure:"retention" yaml:"retention" json:"retention"`
 }
 
@@ -120,39 +116,6 @@ func (u UpstreamConfig) WithDefaults() UpstreamConfig {
 		u.UserAgent = DefaultUpstreamUserAgent
 	}
 	return u
-}
-
-const (
-	DefaultDegradeModel  = "gpt-6.1-sol"
-	DefaultDegradeEffort = "low"
-)
-
-// DegradeEfforts 降智检测可选的推理强度，和 Codex 客户端的选项一致；none 表示不指定、由上游决定。
-var DegradeEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
-
-// DegradeConfig GPT 降智检测默认用的备选模型和推理强度，单把密钥可以另设。
-// Models 按顺序排，检测时用排最前、密钥分组里有的那个。Effort 为 "none" 时不指定推理强度，由上游决定。
-type DegradeConfig struct {
-	Models []string `mapstructure:"models" yaml:"models" json:"models"`
-	Effort string   `mapstructure:"effort" yaml:"effort" json:"effort"`
-}
-
-func (d DegradeConfig) WithDefaults() DegradeConfig {
-	models := make([]string, 0, len(d.Models))
-	for _, m := range d.Models {
-		if m = strings.TrimSpace(m); m != "" && !slices.Contains(models, m) {
-			models = append(models, m)
-		}
-	}
-	if len(models) == 0 {
-		models = []string{DefaultDegradeModel}
-	}
-	d.Models = models
-	d.Effort = strings.TrimSpace(d.Effort)
-	if d.Effort == "" {
-		d.Effort = DefaultDegradeEffort
-	}
-	return d
 }
 
 type LogConfig struct {
@@ -224,13 +187,7 @@ func load(path string, withEnv bool) (*Config, string, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, "", fmt.Errorf("unmarshal config: %w", err)
 	}
-	// v0.6.0 的配置文件里是单个模型 degrade.model，当作只有一个模型的列表；在设置页保存后改写成 degrade.models
-	if old := strings.TrimSpace(v.GetString("degrade.model")); old != "" && v.InConfig("degrade.model") && !v.InConfig("degrade.models") &&
-		!(withEnv && os.Getenv("DEGRADE_MODELS") != "") {
-		cfg.Degrade.Models = []string{old}
-	}
 	cfg.Upstream = cfg.Upstream.WithDefaults()
-	cfg.Degrade = cfg.Degrade.WithDefaults()
 	return cfg, v.ConfigFileUsed(), nil
 }
 
@@ -290,8 +247,6 @@ func setDefaults(v *viper.Viper) {
 	// CLAUDE.md 默认建议：余额 15 分钟，倍率 30 分钟。
 	v.SetDefault("scheduler.balanceCron", "37 */15 * * * *")
 	v.SetDefault("scheduler.rateCron", "13 */30 * * * *")
-	// 降智检测每次都要花钱，默认不巡检；登记空默认值，SCHEDULER_DEGRADECRON 才能生效
-	v.SetDefault("scheduler.degradeCron", "")
 
 	// 历史清理：每天凌晨 3:17 跑一次（6 字段 cron 含秒），
 	// monitor 30 天 / balance 90 天 / notify 90 天。rate_change_logs 不清理（业务核心数据）。
@@ -313,9 +268,6 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("upstream.timeoutSeconds", DefaultUpstreamTimeoutSeconds)
 	v.SetDefault("upstream.userAgent", DefaultUpstreamUserAgent)
-
-	v.SetDefault("degrade.models", []string{DefaultDegradeModel})
-	v.SetDefault("degrade.effort", DefaultDegradeEffort)
 
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")

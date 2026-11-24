@@ -82,8 +82,7 @@ func TestMigrateNotificationSubscriptions(t *testing.T) {
 	if ids := got[0]["channel_ids"].([]any); len(ids) != 2 {
 		t.Fatalf("covers-all: channel_ids must be kept for rollback, got %v", ids)
 	}
-	// 最后的 cch_sync、degrade 是后面的 20261013_subscription_cch_sync_event、20261013_subscription_degrade_event 补上的。
-	wantEvents := []any{"balance_low", "captcha_failed", "login_failed", "monitor_failed", "recovered", "cch_sync", "degrade"}
+	wantEvents := []any{"balance_low", "captcha_failed", "login_failed", "monitor_failed", "recovered"}
 	if events := got[0]["events"].([]any); !equalAny(events, wantEvents) {
 		t.Fatalf("covers-all: events = %v, want %v", events, wantEvents)
 	}
@@ -96,7 +95,7 @@ func TestMigrateNotificationSubscriptions(t *testing.T) {
 	}
 	if _, got := load("groups"); got[0]["all_channels"] != nil {
 		t.Fatalf("groups-mode subscription must not become all_channels: %v", got)
-	} else if events := got[0]["events"].([]any); !equalAny(events, []any{"rate_changed", "login_failed", "monitor_failed", "recovered", "cch_sync", "degrade"}) {
+	} else if events := got[0]["events"].([]any); !equalAny(events, []any{"rate_changed", "login_failed", "monitor_failed", "recovered"}) {
 		t.Fatalf("groups: events = %v", events)
 	}
 	if nc, _ := load("empty"); nc.Subscriptions != "[]" {
@@ -199,12 +198,13 @@ func equalAny(a, b []any) bool {
 	return true
 }
 
-func TestAddSubscriptionEvent(t *testing.T) {
+func TestRemoveCCHAndDegradeDataMigration(t *testing.T) {
 	db := openTestDB(t)
+	now := time.Now()
 	fixtures := []NotificationChannel{
-		{Name: "picked", Type: NotifyTelegram, ConfigCipher: "x", Enabled: true,
-			Subscriptions: `[{"channel_ids":[1],"mode":"all","events":["rate_changed","recovered"]},{"channel_ids":[2],"mode":"all"}]`},
-		{Name: "already", Type: NotifyWecom, ConfigCipher: "x", Enabled: true,
+		{Name: "mixed", Type: NotifyTelegram, ConfigCipher: "x", Enabled: true,
+			Subscriptions: `[{"channel_ids":[1],"mode":"all","events":["rate_changed","cch_sync","degrade","recovered"]},{"channel_ids":[2],"mode":"all","events":["degrade"]},{"channel_ids":[3],"mode":"all"}]`},
+		{Name: "only-removed", Type: NotifyWecom, ConfigCipher: "x", Enabled: true,
 			Subscriptions: `[{"channel_ids":[1],"mode":"all","events":["cch_sync","degrade"]}]`},
 		{Name: "everything", Type: NotifyWecom, ConfigCipher: "x", Enabled: true, Subscriptions: "[]"},
 		{Name: "broken", Type: NotifyWecom, ConfigCipher: "x", Enabled: true, Subscriptions: "not json"},
@@ -214,30 +214,63 @@ func TestAddSubscriptionEvent(t *testing.T) {
 			t.Fatalf("create %s: %v", fixtures[i].Name, err)
 		}
 	}
-	// 按发布顺序先补 CCH 同步，再补降智检测
-	for _, event := range []NotificationEvent{EventCCHSync, EventDegrade} {
-		if err := addSubscriptionEvent(event)(db); err != nil {
-			t.Fatalf("migrate %s: %v", event, err)
+	for _, st := range []NotificationFailureState{
+		{ChannelID: 0, Kind: "cch_sync", Failures: 1, FirstFailedAt: now, LastFailedAt: now},
+		{ChannelID: 1, Kind: "rates", Failures: 1, FirstFailedAt: now, LastFailedAt: now},
+	} {
+		if err := db.Create(&st).Error; err != nil {
+			t.Fatalf("create failure state %s: %v", st.Kind, err)
+		}
+	}
+	for _, j := range []BackgroundJob{
+		{Kind: JobKind("cch_sync"), Source: JobScheduled, Title: "cch", Status: JobSucceeded, StartedAt: now},
+		{Kind: JobKind("degrade_check"), Source: JobManual, Title: "d1", Status: JobSucceeded, StartedAt: now},
+		{Kind: JobKind("degrade_check_all"), Source: JobScheduled, Title: "d2", Status: JobSucceeded, StartedAt: now},
+		{Kind: JobBalanceScan, Source: JobScheduled, Title: "bal", Status: JobSucceeded, StartedAt: now},
+	} {
+		if err := db.Create(&j).Error; err != nil {
+			t.Fatalf("create job %s: %v", j.Kind, err)
+		}
+	}
+	for _, ml := range []MonitorLog{
+		{ChannelID: 0, Job: MonitorJob("cch_sync"), Success: true, StartedAt: now, FinishedAt: now},
+		{ChannelID: 1, Job: MonitorJobRates, Success: true, StartedAt: now, FinishedAt: now},
+	} {
+		if err := db.Create(&ml).Error; err != nil {
+			t.Fatalf("create monitor log %s: %v", ml.Job, err)
 		}
 	}
 
-	got := map[string]string{}
+	if err := removeCCHAndDegradeData(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
 	var rows []NotificationChannel
 	if err := db.Order("id").Find(&rows).Error; err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("load channels: %v", err)
 	}
+	got := map[string]NotificationChannel{}
 	for _, r := range rows {
-		got[r.Name] = r.Subscriptions
+		got[r.Name] = r
 	}
-	want := map[string]string{
-		"picked":     `[{"channel_ids":[1],"events":["rate_changed","recovered","cch_sync","degrade"],"mode":"all"},{"channel_ids":[2],"mode":"all"}]`,
-		"already":    fixtures[1].Subscriptions,
-		"everything": "[]",
-		"broken":     "not json",
+	if want := `[{"channel_ids":[1],"events":["rate_changed","recovered"],"mode":"all"},{"channel_ids":[3],"mode":"all"}]`; got["mixed"].Subscriptions != want || !got["mixed"].Enabled {
+		t.Fatalf("mixed = enabled:%v subs:%s, want %s", got["mixed"].Enabled, got["mixed"].Subscriptions, want)
 	}
-	for name, w := range want {
-		if got[name] != w {
-			t.Errorf("%s subscriptions = %s, want %s", name, got[name], w)
-		}
+	if got["only-removed"].Subscriptions != "[]" || got["only-removed"].Enabled {
+		t.Fatalf("only-removed must be disabled with empty subs, got enabled:%v subs:%s", got["only-removed"].Enabled, got["only-removed"].Subscriptions)
+	}
+	if got["everything"].Subscriptions != "[]" || !got["everything"].Enabled {
+		t.Fatalf("everything changed: %+v", got["everything"])
+	}
+	if got["broken"].Subscriptions != "not json" || !got["broken"].Enabled {
+		t.Fatalf("broken changed: %+v", got["broken"])
+	}
+
+	var failCount, jobCount, logCount int64
+	db.Model(&NotificationFailureState{}).Count(&failCount)
+	db.Model(&BackgroundJob{}).Count(&jobCount)
+	db.Model(&MonitorLog{}).Count(&logCount)
+	if failCount != 1 || jobCount != 1 || logCount != 1 {
+		t.Fatalf("remaining rows = fail:%d job:%d log:%d, want 1/1/1", failCount, jobCount, logCount)
 	}
 }

@@ -4,6 +4,25 @@
 
 还没发版的改动先记在“未发布”下，发版时把这个标题改成版本号和日期，再打 tag。推送 `vX.Y.Z` tag 后，发布工作流会取对应段落作为 GitHub Release 的说明，并在末尾附上镜像地址和 digest；找不到对应段落会在构建镜像前失败。应用里“检测更新”发现新版本时，弹窗显示的就是这些 Release 说明。
 
+## 未发布
+
+### 移除
+
+- 移除 **CCH 成本倍率同步** 与 **GPT 降智检测** 功能（前后端路由、调度器、存储代码、通知事件及对应页面/配置项一并清理），聚焦上游中转站监控、充值兑换、密钥管理、倍率变化、公告与通知等核心能力。
+
+### 变更
+
+- 前端整体从 Semi Design + VChart 全面改造为官方开源 [HeroUI React v3](https://www.heroui.com)（`@heroui/react` + `@heroui/styles` + Tailwind CSS v4），搭配 `@gravity-ui/icons`、`recharts` 与 `react-markdown`（沿用 `rehype-raw` + `rehype-sanitize` 白名单过滤）；参考 HeroUI Pro v3 布局风格以纯开源组件重构侧边栏、独立嵌套表格、手风琴展开行、标签组与设置表单，后端接口契约不变。
+- 界面统一为纯亮色模式（移除暗色模式与主题切换），并优化全站细圆角无箭头滚动条样式及 `ScrollShadow` 滚动阴影。
+
+### 升级前注意
+
+启动时会自动执行一次性迁移（`20261124_remove_cch_and_degrade_data`），建议先备份数据库：
+
+- 删除已移除功能的数据表 `cch_sync_configs`、`degrade_keys`、`degrade_checks`。
+- 清理历史记录中的 `cch_sync` / `degrade_check` / `degrade_check_all` 后台任务、`cch_sync` 监控日志与连续失败状态。
+- 从通知渠道的订阅规则中剥离 `cch_sync` 和 `degrade` 事件；若某通知渠道所有规则均因此被清空，会自动禁用该通知渠道以避免静默变为订阅全部事件。历史通知发送记录保持原样，按保留天数自然过期。
+
 ## v0.7.1（2026-10-13）
 
 ### 修复

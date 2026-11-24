@@ -1,33 +1,15 @@
-import { useMemo } from "react"
-import { VChartSimple } from "@visactor/react-vchart"
-import { VChart } from "@visactor/vchart/esm/core"
-import { registerCommonChart } from "@visactor/vchart/esm/chart/common"
-import { registerLineSeries } from "@visactor/vchart/esm/series/line/line"
-import { registerCartesianBandAxis, registerCartesianLinearAxis } from "@visactor/vchart/esm/component/axis/cartesian"
-import { registerCartesianCrossHair } from "@visactor/vchart/esm/component/crosshair"
-import { registerDiscreteLegend } from "@visactor/vchart/esm/component/legend"
-import { registerTooltip } from "@visactor/vchart/esm/component/tooltip"
-import { registerDomTooltipHandler } from "@visactor/vchart/esm/plugin/components/tooltip-handler"
-import { registerAnimate } from "@visactor/vchart/esm/plugin/other"
-import { initVChartSemiTheme } from "@visactor/vchart-semi-theme"
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
+import { Surface } from "@heroui/react"
 import { money } from "@/lib/format"
-import { useResolvedTheme } from "@/lib/theme"
-
-// 按需注册：@visactor/vchart 主入口会连带注册全部图表类型（vchart-all），react-vchart 的 CommonChart 也从主入口引入，
-// 图表这块产物因此有 1.3 MB。这里只注册双轴折线图用到的部分，配 VChartSimple 使用。
-VChart.useRegisters([
-  registerCommonChart,
-  registerLineSeries,
-  registerCartesianBandAxis,
-  registerCartesianLinearAxis,
-  registerCartesianCrossHair,
-  registerDiscreteLegend,
-  registerTooltip,
-  registerDomTooltipHandler,
-  registerAnimate,
-])
-// 图表配色跟随 Semi 主题，并监听 body 的 theme-mode 切换亮色、暗色。放在本模块里，只有用到图表的页面才加载 VChart。
-initVChartSemiTheme({ isWatchingMode: true })
 
 export interface BalanceCostPoint {
   /** 横轴文字，如 10月13日 */
@@ -44,58 +26,127 @@ function formatY(n: number) {
   return `$${n.toFixed(abs >= 10 ? 1 : 2)}`
 }
 
-/**
- * 余额（左轴）和消费（右轴）双轴折线图。默认导出，由总览页按需加载。
- *
- * vchart-semi-theme 1.13.1 配 VChart 2.x 时，暗色下分类轴（横轴）的标签仍是亮色主题的颜色，
- * 所以这里按当前主题从 Semi 的 CSS 变量读出文字颜色，写进各坐标轴，并在主题变化时重新挂载图表。
- */
-export default function BalanceCostChart({ data, height = 280, compact = false }: {
+interface TooltipPayloadItem {
+  name?: string
+  value?: number | string | null
+  color?: string
+}
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: TooltipPayloadItem[]
+  label?: string
+}) {
+  if (!active || !payload?.length) return null
+  const valid = payload.filter((item) => item.value != null && item.value !== "")
+  if (valid.length === 0) return null
+
+  return (
+    <Surface className="rounded-xl border border-separator/80 bg-overlay px-3 py-2 text-xs text-foreground shadow-overlay">
+      <div className="mb-1.5 font-medium text-muted">{label}</div>
+      <div className="flex flex-col gap-1">
+        {valid.map((item) => (
+          <div key={item.name} className="flex items-center justify-between gap-4">
+            <span className="flex items-center gap-1.5 text-muted">
+              <span
+                className="inline-block size-2 rounded-full"
+                style={{ backgroundColor: item.color }}
+              />
+              {item.name}
+            </span>
+            <span className="num font-semibold text-foreground">{money(Number(item.value))}</span>
+          </div>
+        ))}
+      </div>
+    </Surface>
+  )
+}
+
+/** 余额（左轴）和消费（右轴）双轴折线图。默认导出，由总览页按需加载。 */
+export default function BalanceCostChart({
+  data,
+  height = 280,
+  compact = false,
+}: {
   data: BalanceCostPoint[]
   height?: number
   compact?: boolean
 }) {
-  const theme = useResolvedTheme()
+  const tickStyle = { fill: "var(--muted)", fontSize: compact ? 10 : 12 }
 
-  const spec = useMemo(() => {
-    const labelColor = getComputedStyle(document.body).getPropertyValue("--semi-color-text-2").trim() || undefined
-    const label = { style: { fill: labelColor, fontSize: compact ? 10 : 12 } }
-    const balance = data.filter((d) => d.balance != null).map((d) => ({ day: d.day, value: d.balance, type: "余额" }))
-    const cost = data.filter((d) => d.cost != null).map((d) => ({ day: d.day, value: d.cost, type: "消费" }))
-    const line = { style: { lineWidth: 2, curveType: "monotone" } }
-    return {
-      type: "common",
-      height,
-      padding: compact ? [8, 4, 4, 0] : [12, 12, 8, 8],
-      data: [
-        { id: "balance", values: balance },
-        { id: "cost", values: cost },
-      ],
-      series: [
-        { type: "line", id: "balance", dataId: "balance", xField: "day", yField: "value", seriesField: "type", line, point: { visible: !compact } },
-        { type: "line", id: "cost", dataId: "cost", xField: "day", yField: "value", seriesField: "type", line, point: { visible: !compact } },
-      ],
-      axes: [
-        { orient: "bottom", type: "band", label },
-        { orient: "left", seriesId: ["balance"], label: { ...label, formatMethod: (v: number) => formatY(Number(v)) }, nice: true, zero: true },
-        {
-          orient: "right",
-          seriesId: ["cost"],
-          visible: !compact,
-          grid: { visible: false },
-          label: { ...label, formatMethod: (v: number) => formatY(Number(v)) },
-          nice: true,
-          zero: true,
-        },
-      ],
-      legends: { visible: true, orient: "top", position: "start", item: { label: { style: { fill: labelColor } } } },
-      tooltip: {
-        mark: { content: [{ key: (d: any) => d?.type, value: (d: any) => money(Number(d?.value)) }] },
-        dimension: { content: [{ key: (d: any) => d?.type, value: (d: any) => money(Number(d?.value)) }] },
-      },
-    }
-    // theme 变了要重新读 CSS 变量
-  }, [data, height, compact, theme])
-
-  return <VChartSimple key={theme} vchartConstructor={VChart} spec={spec as any} />
+  return (
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={data}
+          margin={compact ? { top: 8, right: 6, bottom: 4, left: -12 } : { top: 8, right: 12, bottom: 4, left: 4 }}
+        >
+          <CartesianGrid stroke="var(--separator)" strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="day"
+            tick={tickStyle}
+            tickMargin={8}
+            axisLine={{ stroke: "var(--separator)" }}
+            tickLine={false}
+            minTickGap={compact ? 24 : 16}
+          />
+          <YAxis
+            yAxisId="balance"
+            orientation="left"
+            tick={tickStyle}
+            tickFormatter={(v: number) => formatY(Number(v))}
+            axisLine={false}
+            tickLine={false}
+            width={compact ? 46 : 56}
+          />
+          <YAxis
+            yAxisId="cost"
+            orientation="right"
+            hide={compact}
+            tick={tickStyle}
+            tickFormatter={(v: number) => formatY(Number(v))}
+            axisLine={false}
+            tickLine={false}
+            width={compact ? 0 : 56}
+          />
+          <Tooltip content={<ChartTooltip />} />
+          <Legend
+            verticalAlign="top"
+            align="right"
+            iconType="circle"
+            iconSize={8}
+            wrapperStyle={{ fontSize: 12, paddingBottom: 10, color: "var(--muted)" }}
+          />
+          <Line
+            yAxisId="balance"
+            type="monotone"
+            dataKey="balance"
+            name="余额"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            dot={compact ? false : { r: 2.5, fill: "var(--accent)", strokeWidth: 0 }}
+            activeDot={{ r: 4 }}
+            connectNulls
+            isAnimationActive={false}
+          />
+          <Line
+            yAxisId="cost"
+            type="monotone"
+            dataKey="cost"
+            name="消费"
+            stroke="var(--warning)"
+            strokeWidth={2}
+            dot={compact ? false : { r: 2.5, fill: "var(--warning)", strokeWidth: 0 }}
+            activeDot={{ r: 4 }}
+            connectNulls
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
 }

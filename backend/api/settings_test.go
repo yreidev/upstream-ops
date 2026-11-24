@@ -178,54 +178,6 @@ func TestSettingsRespectEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestSaveSettingsDegrade(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := config.Save(path, &config.Config{App: config.AppConfig{Title: "Old"}}); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-	r := gin.New()
-	rt := newSettingsRuntime(path)
-	var applied config.DegradeConfig
-	rt.OnApply(func(c *config.Config) { applied = c.Degrade })
-	registerSettings(r.Group("/api"), &Deps{Runtime: rt})
-
-	body := func(degradeCron, effort string) string {
-		return `{
-			"app":{"title":"Old","notificationPrefix":""},
-			"auth":{"enabled":false},
-			"scheduler":{"balanceCron":"","rateCron":"","degradeCron":"` + degradeCron + `","retention":{"cron":""}},
-			"notifications":{"minChangePct":0,"balanceLowCooldownMinutes":60,"sendMaxAttempts":3},
-			"upstream":{},
-			"degrade":{"models":["gpt-test"," gpt-next ","gpt-test",""],"effort":"` + effort + `"}
-		}`
-	}
-	if rec := putSettings(r, body("0 0 * * *", "low")); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "降智巡检 Cron") {
-		t.Fatalf("bad cron: status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if rec := putSettings(r, body("", "extreme")); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "推理强度") {
-		t.Fatalf("bad effort: status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if rec := putSettings(r, body("0 0 */6 * * *", "high")); rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	got, err := config.LoadFile(path)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if got.Scheduler.DegradeCron != "0 0 */6 * * *" || strings.Join(got.Degrade.Models, ",") != "gpt-test,gpt-next" || got.Degrade.Effort != "high" {
-		t.Fatalf("saved scheduler = %#v degrade = %#v", got.Scheduler, got.Degrade)
-	}
-	// 保存后备选模型立即生效，去掉空白和重复
-	if strings.Join(applied.Models, ",") != "gpt-test,gpt-next" || applied.Effort != "high" {
-		t.Fatalf("applied = %#v", applied)
-	}
-	// 留空回到默认值
-	if rec := putSettings(r, body("", "")); rec.Code != http.StatusOK || applied.Effort != config.DefaultDegradeEffort {
-		t.Fatalf("empty effort: status = %d, applied = %#v", rec.Code, applied)
-	}
-}
-
 func TestCronNextRuns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import { Card, Select, Spin, Table, Tag, Tooltip, Typography } from "@douyinfe/semi-ui"
-import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
-import { IconClose, IconMinus, IconTick } from "@douyinfe/semi-icons"
+import { Accordion, Chip, EmptyState, ListBox, Select, Spinner, Surface, type Key } from "@heroui/react"
+import { Check, Xmark } from "@gravity-ui/icons"
 import { PageHeader } from "@/components/layout/page-header"
+import { PaginationBar } from "@/components/common/pagination-bar"
 import { stageLabel } from "@/components/channels/channel-parts"
 import type { BackgroundJob, JobKind, JobSource, JobStatus, ProgressEvent } from "@/lib/api-types"
 import { formatDurationMS, fullDateTime, relativeTime } from "@/lib/format"
@@ -23,11 +23,11 @@ function clockTime(iso: string) {
 }
 
 function EventIcon({ ev, running }: { ev: ProgressEvent; running: boolean }) {
-  if (ev.stage === "skipped") return <IconMinus size="small" style={{ color: "var(--semi-color-text-2)" }} />
-  if (ev.stage === "error" || ev.ok === false) return <IconClose size="small" style={{ color: "var(--semi-color-danger)" }} />
-  if (ev.ok === true || ev.stage === "done") return <IconTick size="small" style={{ color: "var(--semi-color-success)" }} />
+  if (ev.stage === "skipped") return <span className="mt-1.5 inline-block h-0.5 w-2.5 rounded-full bg-muted" />
+  if (ev.stage === "error" || ev.ok === false) return <Xmark className="size-3.5 text-danger" />
+  if (ev.ok === true || ev.stage === "done") return <Check className="size-3.5 text-success" />
   // 没有结论的“进行中”事件：任务还在跑就转圈，已结束说明这一步没跑完
-  return running ? <Spin size="small" /> : <IconMinus size="small" style={{ color: "var(--semi-color-warning)" }} />
+  return running ? <Spinner size="sm" /> : <span className="mt-1.5 inline-block h-0.5 w-2.5 rounded-full bg-warning" />
 }
 
 /** 展开一行时才拉这条任务的分步进度；任务还在跑就每秒刷新。 */
@@ -42,35 +42,25 @@ function JobDetail({ id }: { id: number }) {
     return () => clearInterval(t)
   }, [running, refetch])
 
-  if (job.loading) return <Spin />
-  if (job.error) return <Typography.Text type="danger">{job.error}</Typography.Text>
+  if (job.loading) return <Spinner size="sm" />
+  if (job.error) return <span className="text-xs text-danger">{job.error}</span>
   const events = job.data?.events ?? []
   if (events.length === 0) {
-    return <Typography.Text type="tertiary">{running ? "准备中…" : "没有分步记录"}</Typography.Text>
+    return <span className="text-xs text-muted">{running ? "准备中…" : "没有分步记录"}</span>
   }
   return (
-    <div className="stack" style={{ gap: 4, padding: "4px 0" }}>
+    <div className="stack gap-1 py-0.5">
       {events.map((ev, i) => {
         const failed = ev.stage === "error" || ev.ok === false
         return (
-          <div key={i} className="row" style={{ alignItems: "flex-start", gap: 8 }}>
-            <span style={{ width: 16, display: "inline-flex", justifyContent: "center", paddingTop: 2 }}>
+          <div key={i} className="row items-start gap-2 text-xs">
+            <span className="inline-flex w-4 shrink-0 justify-center pt-0.5">
               <EventIcon ev={ev} running={running} />
             </span>
-            <Typography.Text type="tertiary" size="small" className="num" style={{ flexShrink: 0 }}>
-              {clockTime(ev.time)}
-            </Typography.Text>
-            {ev.channel_name ? (
-              <Typography.Text size="small" style={{ flexShrink: 0 }}>
-                {ev.channel_name}
-              </Typography.Text>
-            ) : null}
-            <Typography.Text type="tertiary" size="small" style={{ width: 32, flexShrink: 0 }}>
-              {stageLabel[ev.stage] ?? ev.stage}
-            </Typography.Text>
-            <Typography.Text size="small" type={failed ? "danger" : undefined} className="pre-wrap" style={{ minWidth: 0 }}>
-              {ev.message}
-            </Typography.Text>
+            <span className="num shrink-0 text-muted">{clockTime(ev.time)}</span>
+            {ev.channel_name ? <span className="shrink-0 font-medium text-foreground">{ev.channel_name}</span> : null}
+            <span className="w-8 shrink-0 text-muted">{stageLabel[ev.stage] ?? ev.stage}</span>
+            <span className={`pre-wrap min-w-0 ${failed ? "text-danger" : "text-foreground"}`}>{ev.message}</span>
           </div>
         )
       })}
@@ -78,14 +68,18 @@ function JobDetail({ id }: { id: number }) {
   )
 }
 
+const JOBS_GRID = "grid grid-cols-[84px_minmax(140px,1fr)_64px_82px_68px_minmax(160px,1.2fr)] items-center gap-2"
+
 export default function JobsPage() {
   const isMobile = useIsMobile()
   const [kind, setKind] = useState<JobKind | undefined>()
   const [source, setSource] = useState<JobSource | undefined>()
   const [status, setStatus] = useState<JobStatus | undefined>()
   const [page, setPage] = useState(1)
+  const [expandedKeys, setExpandedKeys] = useState<Set<Key>>(() => new Set())
   const jobs = useJobs({ kind, source, status }, page, PAGE_SIZE)
   const items = jobs.data?.items ?? []
+  const total = jobs.data?.total ?? 0
   const hasRunning = items.some((j) => j.status === "running")
   const { refetch } = jobs
 
@@ -96,140 +90,222 @@ export default function JobsPage() {
     return () => clearInterval(t)
   }, [hasRunning, refetch])
 
-  function filterChanged<T>(set: (v: T | undefined) => void) {
-    return (v: unknown) => {
-      set((v ?? undefined) as T | undefined)
-      setPage(1)
-    }
-  }
-
-  const columns: ColumnProps<BackgroundJob>[] = [
-    {
-      title: "开始时间",
-      dataIndex: "started_at",
-      width: 120,
-      render: (v: string) => (
-        <Tooltip content={fullDateTime(v)}>
-          <span>{relativeTime(v)}</span>
-        </Tooltip>
-      ),
-    },
-    {
-      title: "任务",
-      dataIndex: "title",
-      width: 220,
-      render: (title: string, job) => {
-        const kindText = jobKindLabel[job.kind] ?? job.kind
-        // 定时任务的标题就是类型名，不重复显示
-        return (
-          <div className="stack" style={{ gap: 2 }}>
-            <Typography.Text>{title}</Typography.Text>
-            {kindText !== title ? (
-              <Typography.Text type="tertiary" size="small">
-                {kindText}
-              </Typography.Text>
-            ) : null}
-          </div>
-        )
-      },
-    },
-    {
-      title: "触发",
-      dataIndex: "source",
-      width: 80,
-      render: (v: JobSource) => <Tag color={v === "manual" ? "violet" : "grey"}>{jobSourceLabel[v] ?? v}</Tag>,
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 100,
-      render: (v: JobStatus) => {
-        const meta = jobStatusMeta[v] ?? { label: v, color: "grey" as const }
-        return (
-          <Tag color={meta.color} prefixIcon={v === "running" ? <Spin size="small" /> : undefined}>
-            {meta.label}
-          </Tag>
-        )
-      },
-    },
-    {
-      title: "耗时",
-      dataIndex: "finished_at",
-      width: 90,
-      render: (_: unknown, job) => <span className="num">{job.status === "running" ? "—" : formatDurationMS(durationOf(job))}</span>,
-    },
-    {
-      title: "结果",
-      dataIndex: "message",
-      render: (v: string | undefined, job) =>
-        v ? (
-          <Typography.Text
-            size="small"
-            type={job.status === "failed" ? "danger" : job.status === "interrupted" ? "warning" : undefined}
-            ellipsis={{ rows: 2, showTooltip: { opts: { style: { maxWidth: 560 } } } }}
-          >
-            {v}
-          </Typography.Text>
-        ) : (
-          <Typography.Text type="tertiary">—</Typography.Text>
-        ),
-    },
-  ]
-
   return (
     <div className="page">
       <PageHeader
         title="后台任务"
-        description="手动点的同步、测试登录、CCH 同步、降智检测，以及每轮定时采集、巡检和清理，都在后台跑完并记在这里，关掉页面也不影响。展开一行看每一步；记录和监控日志一起按保留天数清理。"
+        description="手动点的同步、测试登录，以及每轮定时采集和清理，都在后台跑完并记在这里，关掉页面也不影响。展开一行看每一步；记录和监控日志一起按保留天数清理。"
         actions={
           <>
             <Select
+              aria-label="按任务类型筛选"
               placeholder="全部任务"
-              showClear
-              value={kind}
-              onChange={filterChanged(setKind)}
-              style={{ width: 120 }}
-              optionList={Object.entries(jobKindLabel).map(([value, label]) => ({ value, label }))}
-            />
+              value={kind ?? null}
+              onChange={(k) => {
+                setKind(k == null || k === "" ? undefined : (String(k) as JobKind))
+                setPage(1)
+              }}
+              onClear={() => {
+                setKind(undefined)
+                setPage(1)
+              }}
+              className="w-36"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.ClearButton />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {Object.entries(jobKindLabel).map(([value, label]) => (
+                    <ListBox.Item key={value} id={value} textValue={label}>
+                      {label}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+
             <Select
+              aria-label="按触发方式筛选"
               placeholder="手动和定时"
-              showClear
-              value={source}
-              onChange={filterChanged(setSource)}
-              style={{ width: 120 }}
-              optionList={Object.entries(jobSourceLabel).map(([value, label]) => ({ value, label }))}
-            />
+              value={source ?? null}
+              onChange={(k) => {
+                setSource(k == null || k === "" ? undefined : (String(k) as JobSource))
+                setPage(1)
+              }}
+              onClear={() => {
+                setSource(undefined)
+                setPage(1)
+              }}
+              className="w-36"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.ClearButton />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {Object.entries(jobSourceLabel).map(([value, label]) => (
+                    <ListBox.Item key={value} id={value} textValue={label}>
+                      {label}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+
             <Select
+              aria-label="按状态筛选"
               placeholder="全部状态"
-              showClear
-              value={status}
-              onChange={filterChanged(setStatus)}
-              style={{ width: 110 }}
-              optionList={Object.entries(jobStatusMeta).map(([value, meta]) => ({ value, label: meta.label }))}
-            />
+              value={status ?? null}
+              onChange={(k) => {
+                setStatus(k == null || k === "" ? undefined : (String(k) as JobStatus))
+                setPage(1)
+              }}
+              onClear={() => {
+                setStatus(undefined)
+                setPage(1)
+              }}
+              className="w-36"
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.ClearButton />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {Object.entries(jobStatusMeta).map(([value, meta]) => (
+                    <ListBox.Item key={value} id={value} textValue={meta.label}>
+                      {meta.label}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
           </>
         }
       />
-      <Card bodyStyle={{ padding: 0 }}>
-        <Table<BackgroundJob>
-          rowKey="id"
-          size={isMobile ? "small" : "default"}
-          columns={columns}
-          dataSource={items}
-          loading={jobs.loading || jobs.stale}
-          scroll={{ x: 860 }}
-          expandedRowRender={(job) => (job ? <JobDetail id={job.id} /> : null)}
-          empty="没有符合条件的后台任务"
-          pagination={{
-            currentPage: page,
-            pageSize: PAGE_SIZE,
-            total: jobs.data?.total ?? 0,
-            onPageChange: setPage,
-            showTotal: !isMobile,
-            size: isMobile ? "small" : "default",
-          }}
-        />
-      </Card>
+
+      {jobs.loading && !jobs.data ? (
+        <Surface className="flex justify-center rounded-[20px] py-16">
+          <Spinner />
+        </Surface>
+      ) : (
+        <div className={`expandable-table transition-opacity ${jobs.stale ? "opacity-60" : "opacity-100"}`}>
+          <div className="expandable-table__scroll">
+            <div className="min-w-[720px]">
+              <div className="expandable-table__header flex items-center gap-2">
+                <span className="w-4 shrink-0" />
+                <div className={`${JOBS_GRID} flex-1`}>
+                  <span>开始时间</span>
+                  <span>任务</span>
+                  <span>触发</span>
+                  <span>状态</span>
+                  <span>耗时</span>
+                  <span>结果</span>
+                </div>
+              </div>
+              <div className="expandable-table__body">
+                {items.length === 0 ? (
+                  <EmptyState className="py-12 text-sm text-muted">没有符合条件的后台任务</EmptyState>
+                ) : (
+                  <Accordion
+                    allowsMultipleExpanded
+                    expandedKeys={expandedKeys}
+                    onExpandedChange={setExpandedKeys}
+                    className="w-full"
+                  >
+                    {items.map((job) => {
+                      const key = String(job.id)
+                      const open = expandedKeys.has(key)
+                      const kindText = jobKindLabel[job.kind] ?? job.kind
+                      const meta = jobStatusMeta[job.status] ?? { label: job.status, color: "default" as const }
+                      return (
+                        <Accordion.Item key={job.id} id={key}>
+                          <Accordion.Heading>
+                            <Accordion.Trigger className="gap-2 px-3.5 py-2.5 font-normal">
+                              <Accordion.Indicator className="ms-0 shrink-0" />
+                              <div className={`${JOBS_GRID} min-w-0 flex-1`}>
+                                <span className="truncate text-xs text-muted" title={fullDateTime(job.started_at)}>
+                                  {relativeTime(job.started_at)}
+                                </span>
+                                <div className="stack min-w-0 gap-0.5">
+                                  <span className="truncate text-sm font-medium text-foreground" title={job.title}>
+                                    {job.title}
+                                  </span>
+                                  {/* 定时任务的标题就是类型名，不重复显示 */}
+                                  {kindText !== job.title ? (
+                                    <span className="text-xs text-muted">{kindText}</span>
+                                  ) : null}
+                                </div>
+                                <div>
+                                  <Chip color={job.source === "manual" ? "accent" : "default"} variant="soft" size="sm">
+                                    {jobSourceLabel[job.source] ?? job.source}
+                                  </Chip>
+                                </div>
+                                <div>
+                                  <Chip color={meta.color} variant="soft" size="sm">
+                                    {job.status === "running" ? <Spinner size="sm" color="current" /> : null}
+                                    <Chip.Label>{meta.label}</Chip.Label>
+                                  </Chip>
+                                </div>
+                                <span className="num text-xs text-foreground">
+                                  {job.status === "running" ? "—" : formatDurationMS(durationOf(job))}
+                                </span>
+                                <div className="min-w-0">
+                                  {job.message ? (
+                                    <span
+                                      title={job.message}
+                                      className={`line-clamp-2 text-xs ${
+                                        job.status === "failed"
+                                          ? "text-danger"
+                                          : job.status === "interrupted"
+                                            ? "text-warning"
+                                            : "text-foreground"
+                                      }`}
+                                    >
+                                      {job.message}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-muted">—</span>
+                                  )}
+                                </div>
+                              </div>
+                            </Accordion.Trigger>
+                          </Accordion.Heading>
+                          <Accordion.Panel>
+                            <Accordion.Body className="border-t border-separator/70 bg-surface-secondary/45 px-4 py-3 pl-10 text-foreground">
+                              {open ? <JobDetail id={job.id} /> : null}
+                            </Accordion.Body>
+                          </Accordion.Panel>
+                        </Accordion.Item>
+                      )
+                    })}
+                  </Accordion>
+                )}
+              </div>
+            </div>
+          </div>
+          {total > PAGE_SIZE ? (
+            <div className="expandable-table__footer">
+              <PaginationBar
+                page={page}
+                total={total}
+                pageSize={PAGE_SIZE}
+                onChange={setPage}
+                compact={isMobile}
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,92 +1,189 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react"
-import { Link, Outlet, useLocation } from "react-router-dom"
-import { Button, Dropdown, Layout, Nav, SideSheet, Spin, Tag, Tooltip, Typography } from "@douyinfe/semi-ui"
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { Button, Chip, Drawer, ScrollShadow, Separator, Spinner, Tooltip } from "@heroui/react"
 import {
-  IconActivity,
-  IconBell,
-  IconClock,
-  IconDesktop,
-  IconExit,
-  IconGithubLogo,
-  IconHistory,
-  IconHome,
-  IconHorn,
-  IconLineChartStroked,
-  IconMenu,
-  IconMoon,
-  IconRefresh,
-  IconServer,
-  IconSetting,
-  IconShield,
-  IconSun,
-  IconTestScore,
-} from "@douyinfe/semi-icons"
+  ArrowRightFromSquare,
+  ArrowsRotateRight,
+  Bars,
+  Bell,
+  ChartLine,
+  Clock,
+  ClockArrowRotateLeft,
+  Gear,
+  House,
+  LayoutSideContentLeft,
+  LogoGithub,
+  Megaphone,
+  Pulse,
+  Server,
+  Shield,
+} from "@gravity-ui/icons"
 import { useAuth } from "@/lib/auth-context"
 import { relativeTime } from "@/lib/format"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useVersionCheck } from "@/hooks/use-version-check"
 import { useChannels } from "@/lib/queries"
 import { useTriggerRefresh } from "@/lib/refresh-context"
-import { setThemeMode, useResolvedTheme, useThemeMode, type ThemeMode } from "@/lib/theme"
-
-const { Sider, Header, Content } = Layout
 
 // 更新日志要渲染 Markdown，体积大，弹窗打开时才加载。
 const UpdateNotesModal = lazy(() => import("@/components/monitor/update-notes-modal"))
 
 const REPO_URL = "https://github.com/yreidev/upstream-ops"
 
-const NAV_ITEMS: { itemKey: string; text: string; icon: ReactNode }[] = [
-  { itemKey: "/", text: "总览", icon: <IconHome /> },
-  { itemKey: "/channels", text: "渠道", icon: <IconServer /> },
-  { itemKey: "/rates", text: "倍率变化", icon: <IconLineChartStroked /> },
-  { itemKey: "/announcements", text: "上游公告", icon: <IconHorn /> },
-  { itemKey: "/degrade", text: "降智检测", icon: <IconTestScore /> },
-  { itemKey: "/notifications", text: "通知", icon: <IconBell /> },
-  { itemKey: "/captcha", text: "打码平台", icon: <IconShield /> },
-  { itemKey: "/jobs", text: "后台任务", icon: <IconClock /> },
-  { itemKey: "/monitor-logs", text: "监控日志", icon: <IconHistory /> },
-  { itemKey: "/settings", text: "设置", icon: <IconSetting /> },
+interface NavItem {
+  itemKey: string
+  text: string
+  icon: ReactNode
+}
+
+const PRIMARY_NAV_ITEMS: NavItem[] = [
+  { itemKey: "/", text: "总览", icon: <House className="size-4 shrink-0" /> },
+  { itemKey: "/channels", text: "渠道", icon: <Server className="size-4 shrink-0" /> },
+  { itemKey: "/rates", text: "倍率变化", icon: <ChartLine className="size-4 shrink-0" /> },
+  { itemKey: "/announcements", text: "上游公告", icon: <Megaphone className="size-4 shrink-0" /> },
+  { itemKey: "/notifications", text: "通知", icon: <Bell className="size-4 shrink-0" /> },
+  { itemKey: "/captcha", text: "打码平台", icon: <Shield className="size-4 shrink-0" /> },
 ]
 
-const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: ReactNode }[] = [
-  { mode: "light", label: "亮色", icon: <IconSun /> },
-  { mode: "dark", label: "暗色", icon: <IconMoon /> },
-  { mode: "system", label: "跟随系统", icon: <IconDesktop /> },
+const SYSTEM_NAV_ITEMS: NavItem[] = [
+  { itemKey: "/jobs", text: "后台任务", icon: <Clock className="size-4 shrink-0" /> },
+  { itemKey: "/monitor-logs", text: "监控日志", icon: <ClockArrowRotateLeft className="size-4 shrink-0" /> },
+  { itemKey: "/settings", text: "设置", icon: <Gear className="size-4 shrink-0" /> },
 ]
+
+const ALL_NAV_ITEMS = [...PRIMARY_NAV_ITEMS, ...SYSTEM_NAV_ITEMS]
 
 /** 当前路由对应的导航项：/channels/xxx 这类子路径也算在 /channels 下。 */
 function selectedNavKey(pathname: string): string {
-  const hit = NAV_ITEMS.filter((n) => n.itemKey !== "/" && pathname.startsWith(n.itemKey))
+  const hit = ALL_NAV_ITEMS.filter((n) => n.itemKey !== "/" && pathname.startsWith(n.itemKey))
   return hit[0]?.itemKey ?? "/"
 }
 
-function SideNav({ collapsed, onCollapseChange, onNavigate, title }: {
+function SidebarNavGroup({
+  label,
+  items,
+  activeKey,
+  collapsed,
+  onNavigate,
+}: {
+  label: string
+  items: NavItem[]
+  activeKey: string
+  collapsed: boolean
+  onNavigate?: () => void
+}) {
+  const navigate = useNavigate()
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      {!collapsed ? (
+        <span className="select-none px-2.5 py-1.5 text-[11px] font-medium tracking-wider text-muted uppercase">
+          {label}
+        </span>
+      ) : null}
+      {items.map((item) => {
+        const active = item.itemKey === activeKey
+        if (collapsed) {
+          return (
+            <Tooltip key={item.itemKey}>
+              <Button
+                isIconOnly
+                variant="ghost"
+                size="sm"
+                aria-label={item.text}
+                aria-current={active ? "page" : undefined}
+                onPress={() => {
+                  navigate(item.itemKey)
+                  onNavigate?.()
+                }}
+                className={`h-9 w-full rounded-2xl ${
+                  active
+                    ? "bg-default text-foreground"
+                    : "text-muted hover:bg-default/65 hover:text-foreground"
+                }`}
+              >
+                {item.icon}
+              </Button>
+              <Tooltip.Content placement="right">{item.text}</Tooltip.Content>
+            </Tooltip>
+          )
+        }
+
+        return (
+          <Link
+            key={item.itemKey}
+            to={item.itemKey}
+            onClick={() => onNavigate?.()}
+            aria-current={active ? "page" : undefined}
+            className={`flex min-h-9 items-center gap-3 rounded-2xl px-2.5 py-1.5 text-sm no-underline transition-colors ${
+              active
+                ? "bg-default font-medium text-foreground"
+                : "text-muted hover:bg-default/65 hover:text-foreground"
+            }`}
+          >
+            <span className={active ? "text-foreground" : "text-muted"}>{item.icon}</span>
+            <span className="truncate">{item.text}</span>
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
+function SideNav({
+  collapsed = false,
+  onNavigate,
+  title,
+  version,
+}: {
   collapsed?: boolean
-  onCollapseChange?: (collapsed: boolean) => void
   onNavigate?: () => void
   title: string
+  version?: string
 }) {
   const location = useLocation()
+  const activeKey = selectedNavKey(location.pathname)
+
   return (
-    <Nav
-      style={{ height: "100%" }}
-      isCollapsed={collapsed}
-      onCollapseChange={onCollapseChange}
-      selectedKeys={[selectedNavKey(location.pathname)]}
-      items={NAV_ITEMS}
-      onClick={() => onNavigate?.()}
-      renderWrapper={({ itemElement, props }) => (
-        <Link to={String(props.itemKey)} style={{ textDecoration: "none" }}>
-          {itemElement}
-        </Link>
-      )}
-      header={{
-        logo: <IconActivity style={{ fontSize: 28, color: "var(--semi-color-primary)" }} />,
-        text: title,
-      }}
-      footer={onCollapseChange ? { collapseButton: true } : undefined}
-    />
+    <div className="flex h-full flex-col bg-background">
+      <div
+        className={`flex h-14 shrink-0 items-center ${
+          collapsed ? "justify-center px-2" : "gap-2.5 px-4"
+        }`}
+      >
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-foreground shadow-xs">
+          <Pulse className="size-4" />
+        </div>
+        {!collapsed ? (
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-sm leading-tight font-semibold tracking-tight text-foreground">
+              {title}
+            </span>
+            {version ? <span className="num text-[11px] leading-tight text-muted">v{version}</span> : null}
+          </div>
+        ) : null}
+      </div>
+
+      <ScrollShadow className={`flex flex-1 flex-col gap-3 py-2 ${collapsed ? "px-1.5" : "px-3"}`}>
+        <nav aria-label="主导航" className="flex flex-col gap-3">
+          <SidebarNavGroup
+            label="监控"
+            items={PRIMARY_NAV_ITEMS}
+            activeKey={activeKey}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
+          {collapsed ? <Separator className="my-1" /> : null}
+          <SidebarNavGroup
+            label="运维与系统"
+            items={SYSTEM_NAV_ITEMS}
+            activeKey={activeKey}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
+        </nav>
+      </ScrollShadow>
+    </div>
   )
 }
 
@@ -97,8 +194,6 @@ export function AppShell() {
   const refresh = useTriggerRefresh()
   const channels = useChannels()
   const versionCheck = useVersionCheck()
-  const themeMode = useThemeMode()
-  const resolvedTheme = useResolvedTheme()
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -140,98 +235,133 @@ export function AppShell() {
     setTimeout(() => setRefreshing(false), 800)
   }
 
-  const themeIcon = resolvedTheme === "dark" ? <IconMoon /> : <IconSun />
-
   return (
-    <Layout style={{ height: "100%" }}>
-      {isMobile ? null : (
-        <Sider style={{ backgroundColor: "var(--semi-color-bg-1)" }}>
-          <SideNav collapsed={collapsed} onCollapseChange={setCollapsed} title={appTitle} />
-        </Sider>
-      )}
-      <Layout style={{ minWidth: 0 }}>
-        <Header className="app-header">
+    <div className="flex h-full w-full overflow-hidden bg-background text-foreground">
+      {!isMobile ? (
+        <aside
+          className={`h-full shrink-0 shadow-[inset_-1px_0_0_rgba(0,0,0,0.07)] transition-[width] duration-200 ${
+            collapsed ? "w-14" : "w-60"
+          }`}
+        >
+          <SideNav collapsed={collapsed} title={appTitle} version={version} />
+        </aside>
+      ) : null}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="app-header">
           <div className="app-header-left">
             {isMobile ? (
-              <Button theme="borderless" icon={<IconMenu />} aria-label="打开导航" onClick={() => setDrawerOpen(true)} />
-            ) : null}
-            {version ? (
-              <Tooltip content="点击检测更新">
-                <Button theme="borderless" size="small" loading={versionCheck.checking} onClick={versionCheck.check}>
-                  <Typography.Text type="tertiary">v{version}</Typography.Text>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                size="sm"
+                aria-label="打开导航"
+                onPress={() => setDrawerOpen(true)}
+              >
+                <Bars className="size-4" />
+              </Button>
+            ) : (
+              <Tooltip>
+                <Button
+                  isIconOnly
+                  variant="ghost"
+                  size="sm"
+                  aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+                  onPress={() => setCollapsed((v) => !v)}
+                >
+                  <LayoutSideContentLeft className="size-4 text-muted" />
                 </Button>
+                <Tooltip.Content>{collapsed ? "展开侧边栏" : "收起侧边栏"}</Tooltip.Content>
+              </Tooltip>
+            )}
+            {version ? (
+              <Tooltip>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  isPending={versionCheck.checking}
+                  onPress={versionCheck.check}
+                  className="text-muted"
+                >
+                  {versionCheck.checking ? <Spinner size="sm" color="current" /> : null}
+                  <span className="num text-xs">v{version}</span>
+                </Button>
+                <Tooltip.Content>点击检测更新</Tooltip.Content>
               </Tooltip>
             ) : null}
             {updateAvailable ? (
-              <Tag color="green" style={{ cursor: "pointer" }} onClick={versionCheck.openNotes}>
-                有新版本 {latestVersion}
-              </Tag>
+              <Button variant="ghost" size="sm" className="h-auto p-0" onPress={versionCheck.openNotes}>
+                <Chip color="success" variant="soft" size="sm">
+                  有新版本 {latestVersion}
+                </Chip>
+              </Button>
             ) : null}
           </div>
+
           <div className="app-header-right">
-            {isMobile ? null : (
-              <Typography.Text type="tertiary" size="small" style={{ marginRight: 4 }}>
-                上次采集 {relativeTime(lastCollectedAt)}
-              </Typography.Text>
-            )}
-            <Tooltip
-              content={
-                <div style={{ maxWidth: 260 }}>
-                  重新拉取最新的快照数据。实际采集由后台定时任务执行，要立即采集请到渠道页点“同步”。
-                </div>
-              }
-            >
-              <Button theme="borderless" icon={<IconRefresh spin={refreshing} />} aria-label="刷新数据" onClick={handleRefresh} />
-            </Tooltip>
-            <Dropdown
-              position="bottomRight"
-              clickToHide
-              render={
-                <Dropdown.Menu>
-                  {THEME_OPTIONS.map((o) => (
-                    <Dropdown.Item key={o.mode} icon={o.icon} active={themeMode === o.mode} onClick={() => setThemeMode(o.mode)}>
-                      {o.label}
-                    </Dropdown.Item>
-                  ))}
-                </Dropdown.Menu>
-              }
-            >
-              <Button theme="borderless" icon={themeIcon} aria-label="切换主题" />
-            </Dropdown>
-            <Tooltip content="GitHub · yreidev/upstream-ops">
+            {!isMobile ? (
+              <span className="mr-1 text-xs text-muted">上次采集 {relativeTime(lastCollectedAt)}</span>
+            ) : null}
+            <Tooltip>
               <Button
-                theme="borderless"
-                icon={<IconGithubLogo />}
-                aria-label="GitHub 仓库"
-                onClick={() => window.open(REPO_URL, "_blank", "noopener,noreferrer")}
-              />
+                isIconOnly
+                variant="tertiary"
+                size="sm"
+                aria-label="刷新数据"
+                onPress={handleRefresh}
+              >
+                <ArrowsRotateRight className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
+              <Tooltip.Content className="max-w-[260px]">
+                重新拉取最新的快照数据。实际采集由后台定时任务执行，要立即采集请到渠道页点“同步”。
+              </Tooltip.Content>
             </Tooltip>
-            {authDisabled ? null : (
-              <Tooltip content={username ? `${username} · 退出登录` : "退出登录"}>
-                <Button theme="borderless" icon={<IconExit />} aria-label="退出登录" onClick={logout} />
+
+            <Tooltip>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                size="sm"
+                aria-label="GitHub 仓库"
+                onPress={() => window.open(REPO_URL, "_blank", "noopener,noreferrer")}
+              >
+                <LogoGithub className="size-4" />
+              </Button>
+              <Tooltip.Content>GitHub · yreidev/upstream-ops</Tooltip.Content>
+            </Tooltip>
+
+            {!authDisabled ? (
+              <Tooltip>
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
+                  aria-label="退出登录"
+                  onPress={logout}
+                >
+                  <ArrowRightFromSquare className="size-4" />
+                </Button>
+                <Tooltip.Content>{username ? `${username} · 退出登录` : "退出登录"}</Tooltip.Content>
               </Tooltip>
-            )}
+            ) : null}
           </div>
-        </Header>
-        <Content className="app-content">
+        </header>
+
+        <main className="app-content">
           <Suspense fallback={<PageLoading />}>
             <Outlet />
           </Suspense>
-        </Content>
-      </Layout>
+        </main>
+      </div>
 
       {isMobile ? (
-        <SideSheet
-          visible={drawerOpen}
-          onCancel={() => setDrawerOpen(false)}
-          placement="left"
-          width={240}
-          title={null}
-          closable={false}
-          bodyStyle={{ padding: 0 }}
-        >
-          <SideNav title={appTitle} onNavigate={() => setDrawerOpen(false)} />
-        </SideSheet>
+        <Drawer.Backdrop isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
+          <Drawer.Content placement="left">
+            <Drawer.Dialog className="w-[260px] max-w-[260px] bg-background p-0 sm:w-[260px]" aria-label="主导航菜单">
+              <SideNav title={appTitle} version={version} onNavigate={() => setDrawerOpen(false)} />
+            </Drawer.Dialog>
+          </Drawer.Content>
+        </Drawer.Backdrop>
       ) : null}
 
       {versionCheck.notesOpen ? (
@@ -239,14 +369,14 @@ export function AppShell() {
           <UpdateNotesModal visible onClose={versionCheck.closeNotes} version={versionCheck.version} />
         </Suspense>
       ) : null}
-    </Layout>
+    </div>
   )
 }
 
 export function PageLoading() {
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
-      <Spin size="large" />
+    <div className="flex justify-center py-20">
+      <Spinner size="lg" />
     </div>
   )
 }

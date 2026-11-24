@@ -122,10 +122,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&NotificationFailureState{},
 		&LoginBackoffState{},
 		&MonitorLog{},
-		&CCHSyncConfig{},
 		&BackgroundJob{},
-		&DegradeKey{},
-		&DegradeCheck{},
 		&AppliedMigration{},
 	); err != nil {
 		return err
@@ -195,7 +192,7 @@ func dropObsoleteRateSiteColumns(db *gorm.DB) error {
 	return nil
 }
 
-// removedFeatureTables 是已移除的请求网关留下的表，启动时直接删除。
+// removedFeatureTables 是已移除功能（请求网关、CCH 倍率同步、GPT 降智检测）留下的表，启动时直接删除。
 var removedFeatureTables = []string{
 	"gateway_usage_logs",
 	"gateway_routes",
@@ -203,6 +200,9 @@ var removedFeatureTables = []string{
 	"gateway_groups",
 	"gateway_providers",
 	"model_price_overrides",
+	"cch_sync_configs",
+	"degrade_keys",
+	"degrade_checks",
 }
 
 func dropRemovedFeatureTables(db *gorm.DB) error {

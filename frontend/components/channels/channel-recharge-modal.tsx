@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import QRCode from "qrcode"
-import { Banner, Button, Input, Modal, Radio, RadioGroup, Spin, Typography } from "@douyinfe/semi-ui"
+import {
+  Alert,
+  Button,
+  Description,
+  Input,
+  Label,
+  Modal,
+  Spinner,
+  Surface,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@heroui/react"
 import { apiFetch } from "@/lib/api"
 import type { Channel, ChannelRechargeInfo, ChannelRechargeLaunch, RechargePaymentMethod } from "@/lib/api-types"
 import { channelTypeLabel, dateTime, decimal } from "@/lib/format"
@@ -28,14 +40,6 @@ function openFormInNewTab(action: string, fields: Record<string, string>) {
 const paymentMethodLabel: Record<string, string> = {
   alipay: "支付宝",
   wxpay: "微信",
-}
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <Typography.Text strong size="small" style={{ display: "block", marginBottom: 4 }}>
-      {children}
-    </Typography.Text>
-  )
 }
 
 /** 在上游发起充值：跳转支付页、提交支付表单，或显示二维码。channel 为空时不显示。 */
@@ -84,7 +88,15 @@ export function ChannelRechargeModal({ channel, onClose }: { channel: Channel | 
 
   useEffect(() => {
     if (launch?.mode !== "qrcode" || !launch.qr_code || !qrCanvasRef.current) return
-    void QRCode.toCanvas(qrCanvasRef.current, launch.qr_code, { width: 220, margin: 1 })
+    let cancelled = false
+    QRCode.toCanvas(qrCanvasRef.current, launch.qr_code, { width: 220, margin: 1 }).catch((e: unknown) => {
+      if (!cancelled) {
+        setError(e instanceof Error ? `生成二维码失败：${e.message}` : "生成二维码失败")
+      }
+    })
+    return () => {
+      cancelled = true
+    }
   }, [launch])
 
   const parsedAmount = Number(amount)
@@ -129,118 +141,154 @@ export function ChannelRechargeModal({ channel, onClose }: { channel: Channel | 
 
   const showingQR = launch?.mode === "qrcode"
 
-  const footer = showingQR ? (
-    <>
-      <Button onClick={() => setLaunch(null)}>返回</Button>
-      <Button theme="solid" onClick={onClose}>
-        关闭
-      </Button>
-    </>
-  ) : (
-    <>
-      <Button onClick={onClose} disabled={submitting}>
-        取消
-      </Button>
-      <Button theme="solid" onClick={handleSubmit} loading={submitting} disabled={!canSubmit}>
-        立即充值
-      </Button>
-    </>
-  )
-
   return (
-    <Modal visible={channel != null} title="充值" onCancel={onClose} footer={footer} width={460}>
-      <div className="stack" style={{ gap: 14 }}>
-        {channel ? (
-          <Typography.Text type="tertiary">
-            {channel.name} · {channelTypeLabel(channel.type)}
-          </Typography.Text>
-        ) : null}
-
-        {showingQR ? (
-          <div className="stack" style={{ alignItems: "center", gap: 8, padding: 16, borderRadius: 8, background: "var(--semi-color-fill-0)" }}>
-            <canvas ref={qrCanvasRef} style={{ borderRadius: 4, background: "#fff", padding: 8 }} />
-            <Typography.Text>请用{paymentMethodLabel[launchMethod] ?? launchMethod}扫码支付</Typography.Text>
-            {launch.expires_at ? (
-              <Typography.Text type="tertiary" size="small">
-                过期时间：{dateTime(launch.expires_at)}
-              </Typography.Text>
+    <Modal.Backdrop
+      isOpen={channel != null}
+      isDismissable={!submitting}
+      isKeyboardDismissDisabled={submitting}
+      onOpenChange={(open) => !open && !submitting && onClose()}
+    >
+      <Modal.Container size="md">
+        <Modal.Dialog className="max-w-[460px]">
+          <Modal.CloseTrigger isDisabled={submitting} />
+          <Modal.Header className="flex flex-col items-start gap-0.5">
+            <Modal.Heading>充值</Modal.Heading>
+            {channel ? (
+              <span className="text-xs font-normal text-muted">
+                {channel.name} · {channelTypeLabel(channel.type)}
+              </span>
             ) : null}
-          </div>
-        ) : loading ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-            <Spin />
-          </div>
-        ) : info ? (
-          <>
-            <div>
-              <FieldLabel>{info.amount_label || "充值金额"}</FieldLabel>
-              <Input
-                inputMode="decimal"
-                value={amount}
-                onChange={setAmount}
-                placeholder={`最低 ${decimal(info.min_amount)}`}
-                disabled={submitting}
-              />
-              <Typography.Text type="tertiary" size="small">
-                最小 {decimal(info.min_amount)}
-                {info.max_amount > 0 ? `，最大 ${decimal(info.max_amount)}` : ""}
-              </Typography.Text>
-            </div>
-
-            {info.preset_amounts?.length ? (
-              <div>
-                <FieldLabel>快捷金额</FieldLabel>
-                <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
-                  {info.preset_amounts.map((value) => (
-                    <Button
-                      key={value}
-                      size="small"
-                      theme={amount === String(value) ? "solid" : "light"}
-                      onClick={() => setAmount(String(value))}
-                      disabled={submitting}
-                    >
-                      {decimal(value)}
-                    </Button>
-                  ))}
+          </Modal.Header>
+          <Modal.Body>
+            <div className="stack gap-3.5">
+              {showingQR ? (
+                <Surface variant="secondary" className="stack items-center gap-2 rounded-2xl p-4">
+                  <canvas ref={qrCanvasRef} className="rounded-lg bg-white p-2 shadow-xs" />
+                  <span className="text-sm text-foreground">
+                    请用{paymentMethodLabel[launchMethod] ?? launchMethod}扫码支付
+                  </span>
+                  {launch.expires_at ? (
+                    <span className="text-xs text-muted">过期时间：{dateTime(launch.expires_at)}</span>
+                  ) : null}
+                </Surface>
+              ) : loading ? (
+                <div className="flex justify-center py-8">
+                  <Spinner />
                 </div>
-              </div>
-            ) : null}
+              ) : info ? (
+                <>
+                  <TextField variant="secondary" value={amount} onChange={setAmount} isDisabled={submitting} fullWidth>
+                    <Label>{info.amount_label || "充值金额"}</Label>
+                    <Input inputMode="decimal" placeholder={`最低 ${decimal(info.min_amount)}`} />
+                    <Description>
+                      最小 {decimal(info.min_amount)}
+                      {info.max_amount > 0 ? `，最大 ${decimal(info.max_amount)}` : ""}
+                    </Description>
+                  </TextField>
 
-            <div>
-              <FieldLabel>支付方式</FieldLabel>
-              {info.methods?.length ? (
-                <RadioGroup
-                  type="button"
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as RechargePaymentMethod)}
-                  disabled={submitting}
-                >
-                  {info.methods.map((m) => (
-                    <Radio key={m.type} value={m.type}>
-                      {m.name}
-                    </Radio>
-                  ))}
-                </RadioGroup>
-              ) : (
-                <Typography.Text type="tertiary" size="small">
-                  上游没有开放可用的支付方式
-                </Typography.Text>
-              )}
+                  {info.preset_amounts?.length ? (
+                    <div className="stack gap-1.5">
+                      <span className="text-xs font-medium text-foreground">快捷金额</span>
+                      <div className="row flex-wrap gap-2">
+                        {info.preset_amounts.map((value) => (
+                          <Button
+                            key={value}
+                            size="sm"
+                            variant={amount === String(value) ? "primary" : "secondary"}
+                            isDisabled={submitting}
+                            onPress={() => setAmount(String(value))}
+                            className="num"
+                          >
+                            {decimal(value)}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="stack gap-1.5">
+                    <span className="text-xs font-medium text-foreground">支付方式</span>
+                    {info.methods?.length ? (
+                      <ToggleButtonGroup
+                        aria-label="支付方式"
+                        selectionMode="single"
+                        disallowEmptySelection
+                        selectedKeys={method ? new Set([method]) : new Set()}
+                        onSelectionChange={(keys) => {
+                          const first = [...keys][0]
+                          if (first != null) setMethod(String(first) as RechargePaymentMethod)
+                        }}
+                        isDisabled={submitting}
+                        size="sm"
+                      >
+                        {info.methods.map((m) => (
+                          <ToggleButton key={m.type} id={m.type}>
+                            {m.name}
+                          </ToggleButton>
+                        ))}
+                      </ToggleButtonGroup>
+                    ) : (
+                      <span className="text-xs text-muted">上游没有开放可用的支付方式</span>
+                    )}
+                  </div>
+
+                  {info.help_text ? (
+                    <Alert status="accent">
+                      <Alert.Indicator />
+                      <Alert.Content>
+                        <Alert.Description className="pre-wrap">{info.help_text}</Alert.Description>
+                      </Alert.Content>
+                    </Alert>
+                  ) : null}
+                  {info.help_image_url ? (
+                    <img
+                      src={info.help_image_url}
+                      alt="充值说明"
+                      className="max-h-48 w-full rounded-xl bg-white object-contain"
+                    />
+                  ) : null}
+                </>
+              ) : null}
+
+              {error ? (
+                <Alert status="danger">
+                  <Alert.Indicator />
+                  <Alert.Content>
+                    <Alert.Description className="pre-wrap">{error}</Alert.Description>
+                  </Alert.Content>
+                </Alert>
+              ) : null}
             </div>
-
-            {info.help_text ? <Banner fullMode={false} type="info" closeIcon={null} description={<span className="pre-wrap">{info.help_text}</span>} /> : null}
-            {info.help_image_url ? (
-              <img
-                src={info.help_image_url}
-                alt="充值说明"
-                style={{ maxHeight: 192, width: "100%", objectFit: "contain", background: "#fff", borderRadius: 8 }}
-              />
-            ) : null}
-          </>
-        ) : null}
-
-        {error ? <Banner fullMode={false} type="danger" closeIcon={null} description={error} /> : null}
-      </div>
-    </Modal>
+          </Modal.Body>
+          <Modal.Footer>
+            {showingQR ? (
+              <>
+                <Button variant="tertiary" onPress={() => setLaunch(null)}>
+                  返回
+                </Button>
+                <Button variant="primary" onPress={onClose}>
+                  关闭
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="tertiary" isDisabled={submitting} onPress={onClose}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  isPending={submitting}
+                  isDisabled={!canSubmit}
+                  onPress={() => void handleSubmit()}
+                >
+                  {submitting ? <Spinner size="sm" color="current" /> : null}
+                  立即充值
+                </Button>
+              </>
+            )}
+          </Modal.Footer>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
   )
 }

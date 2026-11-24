@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react"
-import { Banner, Button, Card, Form, Typography } from "@douyinfe/semi-ui"
-import { IconActivity } from "@douyinfe/semi-icons"
+import { useEffect, useState, type FormEvent } from "react"
+import { Alert, Button, Card, Input, Label, Spinner, TextField } from "@heroui/react"
+import { Pulse } from "@gravity-ui/icons"
 import type { ApiError } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { useAppVersion } from "@/lib/queries"
+import { PasswordInput } from "@/components/common/password-input"
 
 export function LoginPage() {
   const { login } = useAuth()
   const appVersion = useAppVersion()
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const appTitle = appVersion.data?.title?.trim() || "UpstreamOps"
@@ -16,57 +19,78 @@ export function LoginPage() {
     document.title = appTitle
   }, [appTitle])
 
-  async function handleSubmit(values: { username: string; password: string }) {
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!username.trim()) {
+      setError("请输入账号")
+      return
+    }
+    if (!password) {
+      setError("请输入密码")
+      return
+    }
     setError(null)
     setSubmitting(true)
     try {
-      await login(values.username.trim(), values.password)
+      await login(username.trim(), password)
     } catch (err) {
-      const e = err as ApiError
-      setError(e.status === 401 ? "账号或密码错误" : e.message || "登录失败")
+      const apiErr = err as ApiError
+      setError(apiErr.status === 401 ? "账号或密码错误" : apiErr.message || "登录失败")
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        minHeight: "100%",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-        background: "var(--semi-color-bg-0)",
-      }}
-    >
-      <Card style={{ width: "100%", maxWidth: 380 }} bodyStyle={{ padding: 28 }}>
-        <div className="row" style={{ gap: 10, marginBottom: 4 }}>
-          <IconActivity style={{ fontSize: 28, color: "var(--semi-color-primary)" }} />
-          <Typography.Title heading={3} style={{ margin: 0 }}>
-            {appTitle}
-          </Typography.Title>
-        </div>
-        <Typography.Text type="tertiary">登录后台，监控渠道余额和倍率。</Typography.Text>
-        <Form<{ username: string; password: string }> onSubmit={handleSubmit} style={{ marginTop: 16 }} disabled={submitting}>
-          <Form.Input
-            field="username"
-            label="账号"
-            autoComplete="username"
-            rules={[{ required: true, message: "请输入账号" }]}
-          />
-          <Form.Input
-            field="password"
-            label="密码"
-            mode="password"
-            autoComplete="current-password"
-            rules={[{ required: true, message: "请输入密码" }]}
-          />
-          {error ? <Banner fullMode={false} type="danger" description={error} closeIcon={null} style={{ marginTop: 8 }} /> : null}
-          <Button htmlType="submit" theme="solid" type="primary" block loading={submitting} style={{ marginTop: 16 }}>
-            登录
-          </Button>
-        </Form>
+    <div className="flex min-h-full items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-[380px] p-6">
+        <Card.Header className="gap-1.5 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-accent text-accent-foreground shadow-xs">
+              <Pulse className="size-5" />
+            </div>
+            <Card.Title className="text-xl font-semibold tracking-tight">{appTitle}</Card.Title>
+          </div>
+          <Card.Description>登录后台，监控渠道余额和倍率。</Card.Description>
+        </Card.Header>
+        <Card.Content>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <TextField
+              variant="secondary"
+              value={username}
+              onChange={setUsername}
+              isRequired
+              isDisabled={submitting}
+              fullWidth
+            >
+              <Label>账号</Label>
+              <Input autoComplete="username" placeholder="请输入账号" />
+            </TextField>
+            <TextField
+              variant="secondary"
+              value={password}
+              onChange={setPassword}
+              isRequired
+              isDisabled={submitting}
+              fullWidth
+            >
+              <Label>密码</Label>
+              <PasswordInput variant="secondary" autoComplete="current-password" placeholder="请输入密码" fullWidth />
+            </TextField>
+            {error ? (
+              <Alert status="danger">
+                <Alert.Indicator />
+                <Alert.Content>
+                  <Alert.Description>{error}</Alert.Description>
+                </Alert.Content>
+              </Alert>
+            ) : null}
+            <Button type="submit" variant="primary" fullWidth isPending={submitting} className="mt-1">
+              {submitting ? <Spinner size="sm" color="current" /> : null}
+              登录
+            </Button>
+          </form>
+        </Card.Content>
       </Card>
     </div>
   )

@@ -11,27 +11,30 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@douyinfe/semi-icons": "^2.104.0",
-    "@douyinfe/semi-illustrations": "^2.104.0",
-    "@douyinfe/semi-ui": "^2.104.0",
-    "@visactor/react-vchart": "^2.1.7",
-    "@visactor/vchart": "^2.1.7",
-    "@visactor/vchart-semi-theme": "^1.13.1",
+    "@gravity-ui/icons": "^2.23.1",
+    "@heroui/react": "^3.2.8",
+    "@heroui/styles": "^3.2.8",
+    "@internationalized/date": "^3.12.4",
     "cronstrue": "^3.32.0",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
+    "recharts": "^3.11.0",
     "rehype-raw": "^7.0.0",
-    "rehype-sanitize": "^6.0.0"
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^26.6.5",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "eslint": "^10.12.0",
+    "tailwindcss": "^4.3.5",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.71.1",
     "vite": "^8.3.4"

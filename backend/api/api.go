@@ -64,8 +64,6 @@ type Deps struct {
 	MonLogs       *storage.MonitorLogs
 	ChannelSvc    channelService
 	Monitor       monitorService
-	CCHSync       cchSyncService
-	Degrade       degradeService
 	Jobs          jobStarter
 	JobRepo       *storage.BackgroundJobs
 	Dispatcher    *notify.Dispatcher
@@ -107,12 +105,6 @@ func Register(r *gin.Engine, d *Deps) {
 		registerSettings(api, d)
 		if d.JobRepo != nil {
 			registerJobs(api, d)
-		}
-		if d.CCHSync != nil {
-			registerCCHSync(api, d)
-		}
-		if d.Degrade != nil {
-			registerDegrade(api, d)
 		}
 	}
 

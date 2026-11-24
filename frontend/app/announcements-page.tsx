@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from "react"
-import { Card, Modal, Spin, Table, Tag, Tooltip, Typography } from "@douyinfe/semi-ui"
-import type { ColumnProps } from "@douyinfe/semi-ui/lib/es/table"
+import { Chip, EmptyState, Link, Modal, ScrollShadow, Separator, Spinner, Surface, Table, Tooltip } from "@heroui/react"
 import { PageHeader } from "@/components/layout/page-header"
+import { PaginationBar } from "@/components/common/pagination-bar"
 import type { UpstreamAnnouncement } from "@/lib/api-types"
 import { channelTypeLabel, dateTime, fullDateTime, relativeTime } from "@/lib/format"
 import { useAnnouncements, useChannels } from "@/lib/queries"
@@ -34,94 +34,134 @@ export default function AnnouncementsPage() {
     return ch ? `${ch.name} · ${channelTypeLabel(ch.type)}` : `渠道 #${id}`
   }
 
-  const columns: ColumnProps<UpstreamAnnouncement>[] = [
-    {
-      title: "标题",
-      key: "title",
-      render: (_: unknown, r: UpstreamAnnouncement) => (
-        <Typography.Text link onClick={() => setActive(r)} ellipsis={{ showTooltip: true }} style={{ maxWidth: 480 }}>
-          {announcementTitle(r)}
-        </Typography.Text>
-      ),
-    },
-    { title: "渠道", dataIndex: "channel_id", width: 220, render: (id: number) => channelText(id) },
-    {
-      title: "类型",
-      dataIndex: "type",
-      width: 110,
-      render: (v?: string) => (v ? <Tag>{v}</Tag> : <Typography.Text type="tertiary">—</Typography.Text>),
-    },
-    {
-      title: "发布时间",
-      key: "when",
-      width: 140,
-      render: (_: unknown, r: UpstreamAnnouncement) => {
-        const when = r.published_at || r.first_seen_at
-        return (
-          <Tooltip content={fullDateTime(when)}>
-            <span>{relativeTime(when)}</span>
-          </Tooltip>
-        )
-      },
-    },
-  ]
-
   const data = announcements.data
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const loading = announcements.loading && !data
+
   return (
     <div className="page">
       <PageHeader title="上游公告" description="采集时从各渠道拉取的公告；在渠道设置里可以关掉某个渠道的公告。" />
-      <Card bodyStyle={{ padding: 0 }}>
-        <Table<UpstreamAnnouncement>
-          rowKey="id"
-          size={isMobile ? "small" : "default"}
-          columns={columns}
-          dataSource={data?.items ?? []}
-          loading={announcements.loading || announcements.stale}
-          scroll={{ x: 720 }}
-          empty="暂无上游公告"
-          onRow={(r) => ({ onClick: () => r && setActive(r), style: { cursor: "pointer" } })}
-          pagination={{
-            currentPage: page,
-            pageSize: PAGE_SIZE,
-            total: data?.total ?? 0,
-            onPageChange: setPage,
-            // 手机上用紧凑分页，放不下“显示第几条”
-            showTotal: !isMobile,
-            size: isMobile ? "small" : "default",
-          }}
-        />
-      </Card>
 
-      <Modal
-        visible={active !== null}
-        onCancel={() => setActive(null)}
-        title={active ? announcementTitle(active) : ""}
-        footer={null}
-        width={720}
-        bodyStyle={{ maxHeight: "65vh", overflowY: "auto", paddingBottom: 24 }}
-      >
-        {active ? (
-          <>
-            <div className="row" style={{ flexWrap: "wrap", marginBottom: 12 }}>
-              <Tag>{channelText(active.channel_id)}</Tag>
-              {active.type ? <Tag>{active.type}</Tag> : null}
-              <Typography.Text type="tertiary" size="small">
-                {dateTime(active.published_at || active.first_seen_at)}
-              </Typography.Text>
-            </div>
-            <Suspense fallback={<Spin />}>
-              <Markdown content={active.content || "—"} />
-            </Suspense>
-            {active.link ? (
-              <div style={{ marginTop: 12 }}>
-                <Typography.Text link={{ href: active.link, target: "_blank", rel: "noopener noreferrer" }} size="small">
-                  {active.link}
-                </Typography.Text>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </Modal>
+      {loading ? (
+        <Surface className="flex justify-center rounded-[20px] py-16">
+          <Spinner />
+        </Surface>
+      ) : (
+        <Table className={`transition-opacity ${announcements.stale ? "opacity-60" : "opacity-100"}`}>
+          <Table.ScrollContainer>
+            <Table.Content aria-label="上游公告列表" className="min-w-[700px]">
+              <Table.Header>
+                <Table.Column isRowHeader>标题</Table.Column>
+                <Table.Column className="w-56">渠道</Table.Column>
+                <Table.Column className="w-28">类型</Table.Column>
+                <Table.Column className="w-36">发布时间</Table.Column>
+              </Table.Header>
+              <Table.Body
+                items={items}
+                renderEmptyState={() => <EmptyState className="py-12 text-sm text-muted">暂无上游公告</EmptyState>}
+              >
+                {(r) => {
+                  const when = r.published_at || r.first_seen_at
+                  const title = announcementTitle(r)
+                  return (
+                    <Table.Row key={r.id} id={r.id} className="cursor-pointer" onAction={() => setActive(r)}>
+                      <Table.Cell>
+                        <Link
+                          onPress={() => setActive(r)}
+                          className="block max-w-[480px] text-sm font-medium text-accent no-underline hover:underline"
+                        >
+                          <span className="block truncate" title={title}>
+                            {title}
+                          </span>
+                        </Link>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <span className="text-sm text-foreground">{channelText(r.channel_id)}</span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {r.type ? (
+                          <Chip size="sm" variant="soft">
+                            {r.type}
+                          </Chip>
+                        ) : (
+                          <span className="text-xs text-muted">—</span>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Tooltip>
+                          <Tooltip.Trigger className="inline-flex">
+                            <span className="text-xs text-muted">{relativeTime(when)}</span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>{fullDateTime(when)}</Tooltip.Content>
+                        </Tooltip>
+                      </Table.Cell>
+                    </Table.Row>
+                  )
+                }}
+              </Table.Body>
+            </Table.Content>
+          </Table.ScrollContainer>
+          {total > PAGE_SIZE ? (
+            <Table.Footer>
+              <PaginationBar
+                page={page}
+                total={total}
+                pageSize={PAGE_SIZE}
+                onChange={setPage}
+                compact={isMobile}
+              />
+            </Table.Footer>
+          ) : null}
+        </Table>
+      )}
+
+      <Modal.Backdrop isOpen={active !== null} onOpenChange={(open) => !open && setActive(null)}>
+        <Modal.Container size="lg" scroll="inside" className="w-[min(720px,calc(100vw-24px))] max-w-none">
+          <Modal.Dialog className="w-full max-w-none">
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <Modal.Heading>{active ? announcementTitle(active) : ""}</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="pb-6">
+              {active ? (
+                <ScrollShadow className="max-h-[65vh] pr-1">
+                  <div className="row flex-wrap">
+                    <Chip size="sm" variant="soft">
+                      {channelText(active.channel_id)}
+                    </Chip>
+                    {active.type ? (
+                      <Chip size="sm" variant="soft" color="accent">
+                        {active.type}
+                      </Chip>
+                    ) : null}
+                    <span className="num text-xs text-muted">
+                      {dateTime(active.published_at || active.first_seen_at)}
+                    </span>
+                  </div>
+                  <Separator className="my-3" />
+                  <Suspense fallback={<Spinner size="sm" />}>
+                    <Markdown content={active.content || "—"} />
+                  </Suspense>
+                  {active.link ? (
+                    <>
+                      <Separator className="my-3" />
+                      <Link
+                        href={active.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="break-all text-xs text-accent"
+                      >
+                        {active.link}
+                      </Link>
+                    </>
+                  ) : null}
+                </ScrollShadow>
+              ) : null}
+            </Modal.Body>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
     </div>
   )
 }

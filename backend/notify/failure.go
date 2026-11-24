@@ -19,8 +19,6 @@ const (
 	FailureBalance FailureKind = "balance"
 	FailureCosts   FailureKind = "costs"
 	FailureRates   FailureKind = "rates"
-	// FailureCCHSync 同步成本倍率到 CCH 失败。不属于某个上游渠道，ChannelID 为 0。
-	FailureCCHSync FailureKind = "cch_sync"
 )
 
 // Label 是失败类别的中文名，用在通知标题里：「<渠道> <Label>失败」「<渠道> <Label>已恢复」。
@@ -38,8 +36,6 @@ func (k FailureKind) Label() string {
 		return "消费采集"
 	case FailureRates:
 		return "倍率采集"
-	case FailureCCHSync:
-		return "CCH 倍率同步"
 	default:
 		return string(k)
 	}
@@ -52,19 +48,12 @@ func (k FailureKind) Event() storage.NotificationEvent {
 		return storage.EventLoginFailed
 	case FailureCaptcha:
 		return storage.EventCaptchaFailed
-	case FailureCCHSync:
-		return storage.EventCCHSync
 	default:
 		return storage.EventMonitorFailed
 	}
 }
 
-// system 表示这类失败不属于某个上游渠道，用 ChannelID 0 记录和通知。
-func (k FailureKind) system() bool {
-	return k == FailureCCHSync
-}
-
-// failureSubject 拼通知标题：「<渠道> <类别><结果>」，系统类失败没有渠道名。
+// failureSubject 拼通知标题：「<渠道> <类别><结果>」。
 func failureSubject(channelName string, kind FailureKind, outcome string) string {
 	if channelName == "" {
 		return kind.Label() + outcome
@@ -96,7 +85,7 @@ type Failure struct {
 //   - 之后仍未恢复，每 failureRemindInterval 提醒一次；
 //   - 计数持久化在 notification_failure_states，重启不丢。
 func (d *Dispatcher) ReportFailure(ctx context.Context, f Failure) error {
-	if f.Err == nil || (f.ChannelID == 0 && !f.Kind.system()) {
+	if f.Err == nil || f.ChannelID == 0 {
 		return nil
 	}
 	now := time.Now()
@@ -157,15 +146,8 @@ func failureBody(state *storage.NotificationFailureState, remind bool, errText s
 
 // ReportSuccess 记一次成功：清掉这些类别的连续失败计数；之前发过失败通知的，补发一条恢复通知。
 func (d *Dispatcher) ReportSuccess(ctx context.Context, channelID uint, channelName string, kinds ...FailureKind) error {
-	if len(kinds) == 0 {
+	if len(kinds) == 0 || channelID == 0 {
 		return nil
-	}
-	if channelID == 0 {
-		for _, k := range kinds {
-			if !k.system() {
-				return nil
-			}
-		}
 	}
 	names := make([]string, len(kinds))
 	for i, k := range kinds {
