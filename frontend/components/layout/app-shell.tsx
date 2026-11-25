@@ -236,7 +236,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background text-foreground">
+    <div className="flex min-h-full w-full bg-background text-foreground md:h-full md:overflow-hidden">
       {!isMobile ? (
         <aside
           className={`h-full shrink-0 shadow-[inset_-1px_0_0_rgba(0,0,0,0.07)] transition-[width] duration-200 ${

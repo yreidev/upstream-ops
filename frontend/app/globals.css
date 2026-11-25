@@ -28,6 +28,14 @@ body,
   margin: 0;
 }
 
+@media (max-width: 767px) {
+  body,
+  #root {
+    height: auto;
+    min-height: 100dvh;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -397,6 +405,9 @@ body {
 
   @media (max-width: 767px) {
     .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
       padding: 0 12px;
     }
 

@@ -6,7 +6,7 @@ const LoginPage = lazy(() => import("@/components/auth/login-page").then((m) => 
 
 function FullScreenLoading() {
   return (
-    <div className="flex h-full items-center justify-center bg-background">
+    <div className="flex min-h-dvh items-center justify-center bg-background">
       <Spinner size="lg" />
     </div>
   )
